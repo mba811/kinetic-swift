@@ -1,0 +1,52 @@
+#!/bin/bash
+
+: ${KINETIC_JAR?"Need to set KINETIC_JAR"}
+
+if [ ! -e $KINETIC_JAR ]; then
+  echo "ERROR: could not find $KINETIC_JAR"
+  exit 1
+fi
+
+function do_start {
+  if screen -ls | grep simulator &> /dev/null; then
+    echo "Simulator already running."
+  else
+    screen -dm -S simulator -c /etc/kinetic/kinetic-simulator.screenrc
+  fi
+}
+
+function do_stop {
+  screen -S simulator -X quit
+}
+
+function do_status {
+  if screen -ls | grep simulator &> /dev/null; then
+    echo "Simulator is running."
+  else
+    echo "Simulator is NOT running."
+  fi
+}
+
+function do_join {
+  screen -S simulator -x
+}
+
+case "$1" in
+  start)
+    shift
+    do_start $@
+    ;;
+  stop)
+    do_stop
+    ;;
+  status)
+    do_status
+    ;;
+  join)
+    shift
+    do_join $@
+    ;;
+  *)
+    echo "USAGE: $0 {start|stop|status|join}"
+    exit 1
+esac

@@ -1,0 +1,5 @@
+#!/bin/bash
+
+kinetic-simulator stop
+rm -fr /srv/node?/sdb?/kinetic
+sudo chef-solo -c /tmp/vagrant-chef-*/solo.rb -o kinetic

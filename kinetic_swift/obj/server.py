@@ -43,13 +43,14 @@ class DiskFile(diskfile.DiskFile):
         self.last_sync = 0
         # configurables
         self.write_depth = DEFAULT_DEPTH
-
-    def open(self, **kwargs):
         try:
             self.conn.connect()
         except socket.error:
-            self._metadata = {}  # mark object as "missing"
-            return self
+            raise diskfile.DiskFileDeviceUnavailable(
+                'unable to connect to %s:%s' % (
+                    self.conn.hostname, self.conn.port))
+
+    def open(self, **kwargs):
         self._read()
         return self
 

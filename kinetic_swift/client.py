@@ -1,7 +1,13 @@
 from kinetic.greenclient import GreenClient
+from kinetic.baseclient import BaseClient
 from kinetic import operations
 
 class KineticSwiftClient(GreenClient):
+
+    def close(self, *args, **kwargs):
+        if self.isConnected and not self._running:
+            BaseClient.close(self)
+        super(KineticSwiftClient, self).close(*args, **kwargs)
 
     def copy_keys(self, target, keys, depth=16):
         host, port = target.split(':')

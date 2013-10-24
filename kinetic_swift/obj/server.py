@@ -44,13 +44,19 @@ class DiskFile(diskfile.DiskFile):
         # configurables
         self.write_depth = DEFAULT_DEPTH
         try:
-            self.conn.connect()
+            self._connect()
         except socket.error:
+            self.conn.close()
             raise diskfile.DiskFileDeviceUnavailable(
                 'unable to connect to %s:%s' % (
                     self.conn.hostname, self.conn.port))
 
+    def _connect(self):
+        if not self.conn.isConnected:
+            self.conn.connect()
+
     def open(self, **kwargs):
+        self._connect()
         self._read()
         return self
 
@@ -85,7 +91,7 @@ class DiskFile(diskfile.DiskFile):
         self._headbuffer = None
         self._nounce = str(uuid4())
         try:
-            self.conn.connect()
+            self._connect()
             self._pending_write = deque()
             yield self
         finally:

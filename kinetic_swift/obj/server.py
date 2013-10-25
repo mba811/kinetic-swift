@@ -31,6 +31,7 @@ def get_nounce(key):
 class DiskFile(diskfile.DiskFile):
 
     def __init__(self, root, device, *args, **kwargs):
+        kwargs['mount_check'] = False
         super(DiskFile, self).__init__(root, device, *args, **kwargs)
         host, port = device.split(':')
         self.conn = KineticSwiftClient(host, int(port))
@@ -46,10 +47,11 @@ class DiskFile(diskfile.DiskFile):
         try:
             self._connect()
         except socket.error:
-            self.conn.close()
-            raise diskfile.DiskFileDeviceUnavailable(
+            self.logger.exception(
                 'unable to connect to %s:%s' % (
                     self.conn.hostname, self.conn.port))
+            self.conn.close()
+            raise diskfile.DiskFileDeviceUnavailable()
 
     def _connect(self):
         if not self.conn.isConnected:
@@ -61,7 +63,13 @@ class DiskFile(diskfile.DiskFile):
         return self
 
     def close(self, **kwargs):
+        real_sock = None
+        green_sock = self.conn._socket
+        if hasattr(green_sock, 'fd'):
+            real_sock = getattr(green_sock.fd, '_sock', None)
         self.conn.close()
+        if real_sock:
+            real_sock.close()
         self._metadata = None
 
     def _read(self):

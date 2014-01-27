@@ -1,5 +1,5 @@
 #!/usr/bin/python
-from setuptools import setup
+from setuptools import setup, find_packages
 
 with open('requirements.txt', 'r') as f:
     requires = [x.strip() for x in f if x.strip()]
@@ -10,7 +10,7 @@ setup(
     version='0.1',
     description='Kinetic Plugin for Swift',
     author='SwiftStack/Seagate',
-    packages=['kinetic_swift'],
+    packages=find_packages(),
     install_requires=requires,
     entry_points={
         'paste.app_factory': [

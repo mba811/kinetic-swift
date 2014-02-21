@@ -123,14 +123,14 @@ class DiskFile(diskfile.DiskFile):
     def _sync_buffer(self):
         if not self._headbuffer:
             # save the headbuffer
-            self._headbuffer = self._buffer
+            self._headbuffer = self._buffer[:self.disk_chunk_size]
             self._chunk_id = 0
         elif self._buffer:
             # write out the chunk buffer!
             self._chunk_id += 1
             key = chunk_key(self.hashpath, self._nounce, self._chunk_id)
-            self._submit_write(key, self._buffer)
-        self._buffer = ''
+            self._submit_write(key, self._buffer[:self.disk_chunk_size])
+        self._buffer = self._buffer[self.disk_chunk_size:]
 
     def _wait_write(self):
         for resp in self._pending_write:
@@ -140,6 +140,8 @@ class DiskFile(diskfile.DiskFile):
         if extension == '.ts':
             metadata['deleted'] = True
         self._sync_buffer()
+        while self._buffer:
+            self._sync_buffer()
         # zero index, chunk-count is len
         metadata['X-Kinetic-Chunk-Count'] = self._chunk_id
         metadata['X-Kinetic-Chunk-Nounce'] = self._nounce

@@ -5,7 +5,7 @@ from kinetic import greenclient
 
 from kinetic_swift.obj import server
 
-from .utils import KineticSwiftTestCase, FakeLogger
+from utils import KineticSwiftTestCase, FakeLogger
 
 
 class TestDiskFile(KineticSwiftTestCase):
@@ -83,7 +83,9 @@ class TestDiskFile(KineticSwiftTestCase):
         write_chunk_size = 6
         write_chunk_count = 7
         object_size = write_chunk_size * write_chunk_count
-        disk_chunk_count = (object_size / disk_chunk_size) - 1
+        # int(math.ceil(1.0 * object_size / disk_chunk_size) - 1)
+        q, r = divmod(object_size, disk_chunk_size)
+        disk_chunk_count = q if r else q - 1
 
         df = server.DiskFile('/srv/node', self.device, '0', 'a', 'c',
                              self.buildKey('o'), FakeLogger(),

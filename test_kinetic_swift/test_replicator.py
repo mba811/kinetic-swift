@@ -209,3 +209,7 @@ class TestKineticCopyReplicator(TestKineticReplicator):
 
     def test_setup(self):
         self.assertEqual(self.daemon.replication_mode, 'copy')
+
+
+if __name__ == "__main__":
+    utils.unittest.main()

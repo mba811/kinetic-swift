@@ -4,6 +4,7 @@ from contextlib import contextmanager
 from collections import deque
 from uuid import uuid4
 import socket
+import errno
 
 import msgpack
 from swift.obj import diskfile, server
@@ -190,6 +191,15 @@ class ObjectController(server.ObjectController):
         kwargs.setdefault('obj_dir', server.DATADIR)
         return DiskFile(self.devices, device, partition, account,
                         container, obj, self.logger, **kwargs)
+
+    def async_update(self, *args, **kwargs):
+        try:
+            return super(ObjectController, self).async_update(*args, **kwargs)
+        except OSError as e:
+            if e.errno != errno.ENOENT:
+                raise
+            self.logger.warning('Unable to sync object update '
+                                'with container server')
 
 
 def app_factory(global_conf, **local_conf):

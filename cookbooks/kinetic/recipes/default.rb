@@ -21,17 +21,17 @@ required_packages.each do |pkg|
   end
 end
 
-KINETIC_JAR="/vagrant/Kinetic-Preview/target/kinetic-0.5.0.1-SNAPSHOT-jar-with-dependencies.jar"
+KINETIC_JAR="/vagrant/kinetic-java/target/kinetic-0.5.0.1-SNAPSHOT-jar-with-dependencies.jar"
 
 execute "mvn-package" do
-  cwd "/vagrant/Kinetic-Preview"
+  cwd "/vagrant/kinetic-java"
   command "mvn clean package" 
   creates KINETIC_JAR
 end
 
 execute "python-kinetic-install" do
-  cwd "/vagrant/Kinetic-Preview/lib"
-  command "easy_install kinetic-0.5.0.1dev-py2.7.egg"
+  cwd "/vagrant/kinetic-py"
+  command "python setup.py develop"
 end
 
 execute "python-kinetic-swift-install" do

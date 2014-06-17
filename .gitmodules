@@ -1,12 +1,12 @@
 [submodule "swift"]
 	path = swift
-	url = git@github.com:openstack/swift.git
+	url = https://github.com/openstack/swift.git
 [submodule "python-swiftclient"]
 	path = python-swiftclient
-	url = git@github.com:openstack/python-swiftclient.git
+	url = https://github.com/openstack/python-swiftclient.git
 [submodule "kinetic-py"]
 	path = kinetic-py
-	url = git@github.com:Seagate/kinetic-py.git
+	url = https://github.com/Seagate/kinetic-py.git
 [submodule "kinetic-java"]
 	path = kinetic-java
-	url = git@github.com:Seagate/kinetic-java.git
+	url = https://github.com/Seagate/kinetic-java.git

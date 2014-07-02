@@ -84,7 +84,9 @@ class KineticSwiftTestCase(unittest.TestCase):
             for port in self.ports:
                 self.client_map[port] = KineticSwiftClient('localhost', port)
         except Exception:
+            e, v, t = sys.exc_info()
             self.tearDown()
+            raise e, v, t
 
     def tearDown(self):
         teardown_simulators(self._sim_map)

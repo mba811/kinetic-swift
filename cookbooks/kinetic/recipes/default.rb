@@ -5,9 +5,8 @@ execute "apt-get-update" do
 end
 
 required_packages = [
-  "default-jdk",
+  "java7-jdk",
   "maven",
-  "protobuf-compiler",
   "libprotobuf-dev",
   "python-distribute",
   "ipython",
@@ -21,28 +20,9 @@ required_packages.each do |pkg|
   end
 end
 
-KINETIC_JAR="/vagrant/kinetic-java/target/kinetic-0.5.0.1-SNAPSHOT-jar-with-dependencies.jar"
-
-execute "mvn-package" do
-  cwd "/vagrant/kinetic-java"
-  command "mvn clean package" 
-  creates KINETIC_JAR
-end
-
-execute "python-kinetic-install" do
-  cwd "/vagrant/kinetic-py"
-  command "python setup.py develop"
-end
-
-execute "python-kinetic-swift-install" do
-  cwd "/vagrant/"
-  command "python setup.py develop"
-  creates "/usr/local/lib/python2.7/dist-packages/kinetic-swift.egg-link"
-end
-
 # build protbuf
 
-PROTOBUF_VERSION = "2.4.1"
+PROTOBUF_VERSION = "2.5.0"
 
 execute "download-protobuf" do
   cwd "/opt/"
@@ -58,11 +38,68 @@ execute "extract-protobuf" do
 end
 
 execute "build-protobuf" do
+  cwd "/opt/protobuf-#{PROTOBUF_VERSION}"
+  command "sh ./configure --prefix=/usr && make && make install"
+  creates "/usr/bin/protoc"
+end
+
+execute "install-python-protobuf" do
   cwd "/opt/protobuf-#{PROTOBUF_VERSION}/python/"
   command "python setup.py build && python setup.py install"
   environment "PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION" => "cpp"
   creates "/usr/local/lib/python2.7/dist-packages/" \
     "protobuf-#{PROTOBUF_VERSION}-py2.7-linux-x86_64.egg/"
+end
+
+# build kinetic-simulator
+
+KINETIC_JAR="/vagrant/kinetic-java/kinetic-simulator/target/kinetic-simulator-0.7.0.2-SNAPSHOT-jar-with-dependencies.jar"
+
+execute "sync-kinetic-proto" do
+  cwd "/vagrant/kinetic-java"
+  command "./bin/syncProtoFromRepo.sh"
+end
+
+execute "build-kinetic-proto" do
+  cwd "/vagrant/kinetic-java"
+  command "./bin/buildProto.sh"
+end
+
+execute "mvn-package" do
+  cwd "/vagrant/kinetic-java"
+  command "mvn clean package -DSkipTests"
+  creates KINETIC_JAR
+end
+
+# install kinetic-py
+
+execute "python-submodule-update" do
+  cwd "/vagrant/kinetic-py"
+  command "git submodule init && git submodule update"
+end
+
+execute "vagrant-submodule-fixup" do
+  cwd "/vagrant/"
+  command "sed 's|/vagrant|../..|' /vagrant/kinetic-py/kinetic-protocol/.git " \
+    "&& sed 's|/vagrant|../../../..|' /vagrant/.git/modules/kinetic-py/modules/kinetic-protocol/config"
+end
+
+execute "python-protoc-build" do
+  cwd "/vagrant/kinetic-py"
+  command "./compile_proto.sh"
+end
+
+execute "python-kinetic-install" do
+  cwd "/vagrant/kinetic-py"
+  command "pip install -r requirements.txt && python setup.py develop"
+end
+
+# install kinetic-swift plugin
+
+execute "python-kinetic-swift-install" do
+  cwd "/vagrant/"
+  command "python setup.py develop"
+  creates "/usr/local/lib/python2.7/dist-packages/kinetic-swift.egg-link"
 end
 
 # setup environment

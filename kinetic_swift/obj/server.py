@@ -93,7 +93,7 @@ class DiskFile(diskfile.DiskFile):
         keys = [chunk_key(self.hashpath, self._nounce, i + 1) for i in
                 range(int(self._metadata['X-Kinetic-Chunk-Count']))]
         for entry in self.conn.get_keys(keys):
-            yield entry.value
+            yield str(entry.value)
 
     @contextmanager
     def create(self, size=None):

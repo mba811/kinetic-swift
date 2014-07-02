@@ -14,8 +14,7 @@ required_packages = [
   "curl", "gcc", "memcached", "rsync", "sqlite3", "xfsprogs", "git-core",
   "python-setuptools", "python-coverage", "python-dev", "python-nose",
   "python-simplejson", "python-xattr",  "python-eventlet", "python-greenlet",
-  "python-pastedeploy", "python-netifaces", "python-pip", "python-dnspython",
-  "python-mock",
+  "python-pastedeploy", "python-netifaces", "python-dnspython", "python-mock",
 ]
 required_packages.each do |pkg|
   package pkg do
@@ -119,14 +118,18 @@ end
 bash "fix-git-relative-submodules" do
   cwd "/vagrant"
   code <<-EOF
-  for project in $(ls .git/modules); do
-    sed -i "s|worktree = .*|worktree = ../../../${project}|g" \
-       .git/modules/${project}/config
+  for path in $(find ./.git/modules -name config); do
+    back_depth=$(dirname $(dirname $path | sed 's|[^/]*/|../|g'))
+    sed -i "s|worktree = /vagrant|worktree = ${back_depth}|g" $path
   done
   rm */.git
   git submodule update
   EOF
-  not_if "cd /vagrant/swift && git status"
+end
+
+execute "pbr-pip-depends" do
+  command "easy_install pip && pip install --upgrade pip setuptools " \
+    "&& apt-get purge python-setuptools -y"
 end
 
 execute "python-swiftclient-install" do
@@ -138,7 +141,7 @@ end
 
 execute "python-swift-install" do
   cwd "/vagrant/swift"
-  command "python setup.py develop && pip install -r test-requirements.txt"
+  command "pip install -e . && pip install -r test-requirements.txt"
   # creates "/usr/local/lib/python2.7/dist-packages/swift.egg-link"
   action :run
 end

@@ -78,10 +78,16 @@ execute "python-submodule-update" do
   command "git submodule init && git submodule update"
 end
 
-execute "vagrant-submodule-fixup" do
-  cwd "/vagrant/"
-  command "sed 's|/vagrant|../..|' /vagrant/kinetic-py/kinetic-protocol/.git " \
-    "&& sed 's|/vagrant|../../../..|' /vagrant/.git/modules/kinetic-py/modules/kinetic-protocol/config"
+bash "fix-git-relative-submodules" do
+  cwd "/vagrant"
+  code <<-EOF
+  for path in $(find ./.git/modules -name config); do
+    back_depth=$(dirname $(dirname $path | sed 's|[^/]*/|../|g'))
+    sed -i "s|worktree = /vagrant|worktree = ${back_depth}|g" $path
+  done
+  rm */.git
+  git submodule update
+  EOF
 end
 
 execute "python-protoc-build" do
@@ -91,7 +97,7 @@ end
 
 execute "python-kinetic-install" do
   cwd "/vagrant/kinetic-py"
-  command "pip install -r requirements.txt && python setup.py develop"
+  command "pip install -r requirements.txt && python setup.py install"
 end
 
 # install kinetic-swift plugin

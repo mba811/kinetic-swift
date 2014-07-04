@@ -1,11 +1,12 @@
 import time
 import unittest
+import random
 
 from kinetic import greenclient
 
 from kinetic_swift.obj import server
 
-from utils import KineticSwiftTestCase, FakeLogger
+from utils import KineticSwiftTestCase, debug_logger, patch_policies
 
 
 class TestDiskFile(KineticSwiftTestCase):
@@ -15,29 +16,28 @@ class TestDiskFile(KineticSwiftTestCase):
         self.port = self.ports[0]
         self.device = 'localhost:%s' % self.port
         self.client = self.client_map[self.port]
+        self.logger = debug_logger('test-kinetic')
+        self.mgr = server.DiskFileManager({}, self.logger)
+        self.policy = random.choice(list(server.diskfile.POLICIES))
 
     def test_create(self):
-        df = server.DiskFile('/srv/node', self.device, '0', 'a', 'c',
-                             self.buildKey('o'), FakeLogger())
+        df = self.mgr.get_diskfile(self.device, '0', 'a', 'c',
+                                   self.buildKey('o'),
+                                   policy_idx=int(self.policy))
         self.assert_(isinstance(df.conn, greenclient.GreenClient))
 
-    def test_open(self):
-        df = server.DiskFile('/srv/node', self.device, '0', 'a', 'c',
-                             self.buildKey('o'), FakeLogger())
-        with df.open():
-            metadata = df.get_metadata()
-        self.assertEquals(metadata, {})
-
     def test_put(self):
-        df = server.DiskFile('/srv/node', self.device, '0', 'a', 'c',
-                             self.buildKey('o'), FakeLogger())
+        df = self.mgr.get_diskfile(self.device, '0', 'a', 'c',
+                                   self.buildKey('o'),
+                                   policy_idx=int(self.policy))
         with df.create() as writer:
             writer.write('awesome')
             writer.put({'X-Timestamp': time.time()})
 
     def test_put_and_get(self):
-        df = server.DiskFile('/srv/node', self.device, '0', 'a', 'c',
-                             self.buildKey('o'), FakeLogger())
+        df = self.mgr.get_diskfile(self.device, '0', 'a', 'c',
+                                   self.buildKey('o'),
+                                   policy_idx=int(self.policy))
         req_timestamp = time.time()
         with df.create() as writer:
             writer.write('awesome')
@@ -55,10 +55,23 @@ class TestDiskFile(KineticSwiftTestCase):
         for k, v in expected.items():
             self.assertEqual(metadata[k], v)
 
+    def test_get_not_found(self):
+        df = self.mgr.get_diskfile(self.device, '0', 'a', 'c',
+                                   self.buildKey('o'),
+                                   policy_idx=int(self.policy))
+        try:
+            df.open()
+        except server.diskfile.DiskFileNotExist:
+            pass
+        else:
+            self.fail('Did not raise deleted!')
+        finally:
+            df.close()
+
     def test_multi_chunk_put_and_get(self):
-        df = server.DiskFile('/srv/node', self.device, '0', 'a', 'c',
-                             self.buildKey('o'), FakeLogger(),
-                             disk_chunk_size=10)
+        df = self.mgr.get_diskfile(self.device, '0', 'a', 'c',
+                                   self.buildKey('o'), disk_chunk_size=10,
+                                   policy_idx=int(self.policy))
         req_timestamp = time.time()
         with df.create() as writer:
             chunk = '\x00' * 10
@@ -87,9 +100,10 @@ class TestDiskFile(KineticSwiftTestCase):
         q, r = divmod(object_size, disk_chunk_size)
         disk_chunk_count = q if r else q - 1
 
-        df = server.DiskFile('/srv/node', self.device, '0', 'a', 'c',
-                             self.buildKey('o'), FakeLogger(),
-                             disk_chunk_size=disk_chunk_size)
+        df = self.mgr.get_diskfile(self.device, '0', 'a', 'c',
+                                   self.buildKey('o'),
+                                   disk_chunk_size=disk_chunk_size,
+                                   policy_idx=int(self.policy))
         req_timestamp = time.time()
         with df.create() as writer:
             chunk = '\x00' * write_chunk_size
@@ -111,9 +125,9 @@ class TestDiskFile(KineticSwiftTestCase):
             self.assertEqual(metadata[k], v)
 
     def test_write_and_delete(self):
-        df = server.DiskFile('/srv/node', self.device, '0', 'a', 'c',
-                             self.buildKey('o'), FakeLogger(),
-                             disk_chunk_size=10)
+        df = self.mgr.get_diskfile(self.device, '0', 'a', 'c',
+                                   self.buildKey('o'), disk_chunk_size=10,
+                                   policy_idx=int(self.policy))
         req_timestamp = time.time()
         with df.create() as writer:
             chunk = '\x00' * 10
@@ -124,21 +138,23 @@ class TestDiskFile(KineticSwiftTestCase):
         req_timestamp += 1
         df.delete(req_timestamp)
 
-        with df.open() as reader:
-            metadata = reader.get_metadata()
-            is_deleted = reader.is_deleted()
-
-        self.assertTrue(metadata['deleted'])
-        self.assertTrue(is_deleted)
+        try:
+            df.open()
+        except server.diskfile.DiskFileDeleted as e:
+            self.assertEqual(e.timestamp, req_timestamp)
+        else:
+            self.fail('Did not raise deleted!')
+        finally:
+            df.close()
 
     def test_overwrite(self):
         num_chunks = 3
         disk_chunk_size = 10
         disk_chunk_count = num_chunks - 1
 
-        df = server.DiskFile('/srv/node', self.device, '0', 'a', 'c',
-                             self.buildKey('o'), FakeLogger(),
-                             disk_chunk_size=10)
+        df = self.mgr.get_diskfile(self.device, '0', 'a', 'c',
+                                   self.buildKey('o'), disk_chunk_size=10,
+                                   policy_idx=int(self.policy))
         req_timestamp = time.time()
         with df.create() as writer:
             chunk = '\x00' * disk_chunk_size
@@ -167,8 +183,10 @@ class TestDiskFile(KineticSwiftTestCase):
         self.assertEquals(body, '\x01' * (disk_chunk_size * num_chunks))
 
         # check object keys
-        start_key = 'objects.%s' % df.hashpath
-        end_key = 'objects.%s/' % df.hashpath
+
+        storage_policy = server.diskfile.get_data_dir(int(self.policy))
+        start_key = '%s.%s' % (storage_policy, df.hashpath)
+        end_key = '%s.%s/' % (storage_policy, df.hashpath)
         with self.client:
             keys = self.client.getKeyRange(start_key, end_key).wait()
         self.assertEqual(1, len(keys))

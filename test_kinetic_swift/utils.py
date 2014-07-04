@@ -1,5 +1,4 @@
 import errno
-import logging
 import os
 import sys
 import shutil
@@ -9,21 +8,12 @@ import tempfile
 import time
 import unittest
 
+import eventlet
 import kinetic
 
 from kinetic_swift.client import KineticSwiftClient
 
-logging.basicConfig(level=logging.DEBUG)
-kinetic_logger = logging.getLogger('kinetic')
-kinetic_logger.addHandler(logging.NullHandler())
-kinetic_logger.propagate = False
-
-
-class FakeLogger(object):
-    pass
-
-for name in ('log', 'debug', 'info', 'warning', 'error', 'critical'):
-    setattr(FakeLogger, name, getattr(logging, name))
+from test.unit import debug_logger, patch_policies, write_fake_ring
 
 
 JAR_PATH = os.environ['KINETIC_JAR']
@@ -57,6 +47,11 @@ def start_simulators(data_dir, *ports):
         teardown_simulators(sim_map)
         raise Exception('only able to connect to %r out of %r' % (connected,
                                                                   sim_map))
+    for port, process in sim_map.items():
+        with eventlet.Timeout(1, exception=False):
+            if process.wait() is not None:
+                raise Exception('%d has terminated, you may have ghost '
+                                'simulators running...' % sim_map[port].pid)
     return sim_map
 
 def teardown_simulators(sim_map):
@@ -70,6 +65,7 @@ def teardown_simulators(sim_map):
         proc.wait()
 
 
+@patch_policies
 class KineticSwiftTestCase(unittest.TestCase):
 
     PORTS = (9123,)

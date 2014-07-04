@@ -5,15 +5,16 @@ import os
 import shutil
 import tempfile
 import time
+import random
 
-from swift.common import ring
+from swift.common import ring, storage_policy
 
 from kinetic_swift.obj import replicator, server
 
 import utils
 
 
-def create_ring(data_dir, *ports):
+def create_rings(data_dir, *ports):
     """
     This makes a two replica, four part ring.
     """
@@ -41,10 +42,13 @@ def create_ring(data_dir, *ports):
             dev_id = device_id_gen.next()
             replica2part2device[replica].append(dev_id)
 
-    object_ring_path = os.path.join(data_dir, 'object.ring.gz')
-    with closing(gzip.GzipFile(object_ring_path, 'wb')) as f:
-        ring_data = ring.RingData(replica2part2device, devices, 30)
-        pickle.dump(ring_data, f)
+
+    for policy in storage_policy.POLICIES:
+        object_ring_path = os.path.join(
+            data_dir, policy.ring_name + '.ring.gz')
+        with closing(gzip.GzipFile(object_ring_path, 'wb')) as f:
+            ring_data = ring.RingData(replica2part2device, devices, 30)
+            pickle.dump(ring_data, f)
 
 
 class TestKineticReplicator(utils.KineticSwiftTestCase):
@@ -54,16 +58,25 @@ class TestKineticReplicator(utils.KineticSwiftTestCase):
 
     def setUp(self):
         super(TestKineticReplicator, self).setUp()
-        create_ring(self.test_dir, *self.ports)
+        create_rings(self.test_dir, *self.ports)
         conf = {
             'swift_dir': self.test_dir,
             'kinetic_replication_mode': self.REPLICATION_MODE,
         }
         self.daemon = replicator.KineticReplicator(conf)
+        self.logger = self.daemon.logger = \
+            utils.debug_logger('test-kinetic-replicator')
+        self.mgr = server.DiskFileManager({}, self.logger)
+        self.policy = random.choice(list(server.diskfile.POLICIES))
+
+    def tearDown(self):
+        for policy in storage_policy.POLICIES:
+            policy.object_ring = None
+        super(TestKineticReplicator, self).tearDown()
 
     def put_object(self, device, object_name, body='', timestamp=None):
-        df = server.DiskFile('/srv/node', device, '0', 'a', 'c',
-                             object_name, utils.FakeLogger())
+        df = self.mgr.get_diskfile(device, '0', 'a', 'c', object_name,
+                                   policy_idx=int(self.policy))
         metadata = {'X-Timestamp': timestamp or time.time()}
         with df.create() as writer:
             writer.write(body)
@@ -71,8 +84,8 @@ class TestKineticReplicator(utils.KineticSwiftTestCase):
         return metadata, body
 
     def get_object(self, device, object_name):
-        df = server.DiskFile('/srv/node', device, '0', 'a', 'c',
-                             object_name, utils.FakeLogger())
+        df = self.mgr.get_diskfile(device, '0', 'a', 'c', object_name,
+                                   policy_idx=int(self.policy))
         with df.open() as reader:
             metadata = reader.get_metadata()
             body = ''.join(reader)
@@ -81,8 +94,9 @@ class TestKineticReplicator(utils.KineticSwiftTestCase):
     def test_setup(self):
         self.assertEqual(self.daemon.swift_dir, self.test_dir)
         expected_path = os.path.join(self.test_dir, 'object.ring.gz')
-        self.assertEqual(self.daemon.object_ring.serialized_path, expected_path)
-        self.assertEquals(len(self.daemon.object_ring.devs), len(self.ports))
+        object_ring = self.daemon.get_object_ring(0)
+        self.assertEqual(object_ring.serialized_path, expected_path)
+        self.assertEquals(len(object_ring.devs), len(self.ports))
         for client in self.client_map.values():
             with client:
                 resp = client.getKeyRange('chunks.', 'objects/')
@@ -118,12 +132,12 @@ class TestKineticReplicator(utils.KineticSwiftTestCase):
         self.daemon._replicate(source_device)
         result = self.get_object(target_device, 'obj1')
         self.assertEquals(expected, result)
-        empty = self.get_object(other_device, 'obj1')
-        expected = ({}, '')
-        self.assertEqual(empty, expected)
+        self.assertRaises(server.diskfile.DiskFileNotExist, self.get_object,
+                          other_device, 'obj1')
 
     def test_replicate_random_chunks(self):
-        _part, devices = self.daemon.object_ring.get_nodes('a', 'c', 'random_object')
+        object_ring = self.daemon.get_object_ring(0)
+        _part, devices = object_ring.get_nodes('a', 'c', 'random_object')
         self.assertEquals(2, len(devices))
         source_device, target_device = [d['device'] for d in devices]
         object_size = 2 ** 20
@@ -160,8 +174,11 @@ class TestKineticReplicator(utils.KineticSwiftTestCase):
         target_keys = target_resp.wait()
         self.assertEqual(len(source_keys), len(target_keys))
         for source_key, target_key in zip(source_keys, target_keys):
-            source_hash, source_nounce = replicator.split_key(source_key)
-            target_hash, target_nounce = replicator.split_key(target_key)
+            source_policy_index, source_hash, source_nounce = \
+                replicator.split_key(source_key)
+            target_policy_index, target_hash, target_nounce = \
+                replicator.split_key(target_key)
+            self.assertEqual(source_policy_index, target_policy_index)
             self.assertEqual(source_hash, target_hash)
             self.assertNotEqual(source_nounce, target_nounce)
         original_key_count = len(source_keys)
@@ -175,8 +192,11 @@ class TestKineticReplicator(utils.KineticSwiftTestCase):
         target_keys = target_resp.wait()
         self.assertEqual(len(source_keys), len(target_keys))
         for source_key, target_key in zip(source_keys, target_keys):
-            source_hash, source_nounce = replicator.split_key(source_key)
-            target_hash, target_nounce = replicator.split_key(target_key)
+            source_policy_index, source_hash, source_nounce = \
+                replicator.split_key(source_key)
+            target_policy_index, target_hash, target_nounce = \
+                replicator.split_key(target_key)
+            self.assertEqual(source_policy_index, target_policy_index)
             self.assertEqual(source_hash, target_hash)
             self.assertNotEqual(source_nounce, target_nounce)
         post_replication_key_count = len(source_keys)
@@ -198,9 +218,8 @@ class TestKineticReplicator(utils.KineticSwiftTestCase):
         result = self.get_object(target_device, 'obj1')
         self.assertEquals(expected, result)
         # and now it's gone from handoff
-        empty = self.get_object(other_device, 'obj1')
-        expected = ({}, '')
-        self.assertEqual(empty, expected)
+        self.assertRaises(server.diskfile.DiskFileNotExist, self.get_object,
+                          other_device, 'obj1')
 
 
 class TestKineticCopyReplicator(TestKineticReplicator):

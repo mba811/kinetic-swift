@@ -18,25 +18,66 @@ def chunk_key(hashpath, nounce, index):
     return 'chunks.%s.%s.%0.32d' % (hashpath, nounce, index)
 
 
-def object_key(hashpath, timestamp=None, extension='.data', nounce=''):
+def object_key(policy_index, hashpath, timestamp='',
+               extension='.data', nounce=''):
+    storage_policy = diskfile.get_data_dir(policy_index)
     if timestamp:
-        return 'objects.%s.%s%s.%s' % (hashpath, timestamp, extension, nounce)
+        return '%s.%s.%s%s.%s' % (storage_policy, hashpath, timestamp,
+                                  extension, nounce)
     else:
         # for use with getPrevious
-        return 'objects.%s/' % (hashpath)
+        return '%s.%s/' % (storage_policy, hashpath)
+
 
 def get_nounce(key):
     return key.rsplit('.', 1)[-1]
 
 
+def get_connection(host, port):
+    return KineticSwiftClient(host, int(port))
+
+
+class DiskFileManager(diskfile.DiskFileManager):
+
+    def __init__(self, conf, logger):
+        super(DiskFileManager, self).__init__(conf, logger)
+
+    def get_diskfile(self, device, *args, **kwargs):
+        host, port = device.split(':')
+        return DiskFile(self, host, port, self.threadpools[device], *args,
+                        **kwargs)
+
+    def pickle_async_update(self, device, account, container, obj, data,
+                            timestamp, policy_idx):
+        pass
+
+
+class DiskFileReader(diskfile.DiskFileReader):
+
+    def __init__(self, diskfile):
+        self.diskfile = diskfile
+
+    def __iter__(self):
+        return iter(self.diskfile)
+
+    def close(self):
+        return self.diskfile.close()
+
+
 class DiskFile(diskfile.DiskFile):
 
-    def __init__(self, root, device, *args, **kwargs):
-        kwargs['mount_check'] = False
-        super(DiskFile, self).__init__(root, device, *args, **kwargs)
-        host, port = device.split(':')
-        self.conn = KineticSwiftClient(host, int(port))
-        self.hashpath = os.path.basename(self.datadir.rstrip(os.path.sep))
+    def __init__(self, mgr, host, port, *args, **kwargs):
+        device_path = ''
+        self.disk_chunk_size = kwargs.pop('disk_chunk_size',
+                                          mgr.disk_chunk_size)
+        self.policy_index = kwargs.get('policy_idx', 0)
+        # this is normally setup in DiskFileWriter, but we do it here
+        self._extension = '.data'
+        # this is to neuter the context manager close in GET
+        self._took_reader = False
+        super(DiskFile, self).__init__(mgr, device_path, *args, **kwargs)
+        self.conn = get_connection(host, port)
+        self.hashpath = os.path.basename(self._datadir.rstrip('/'))
         self._buffer = ''
         # this is the first "disk_chunk_size" + metadata
         self._headbuffer = None
@@ -54,13 +95,37 @@ class DiskFile(diskfile.DiskFile):
             self.conn.close()
             raise diskfile.DiskFileDeviceUnavailable()
 
+    def object_key(self, *args, **kwargs):
+        return object_key(self.policy_index, self.hashpath, *args, **kwargs)
+
     def _connect(self):
         if not self.conn.isConnected:
             self.conn.connect()
 
+    def _read(self):
+        key = self.object_key()
+        entry = self.conn.getPrevious(key).wait()
+        if not entry or not entry.key.startswith(key[:-1]):
+            self._metadata = {}  # mark object as "open"
+            return
+        self.data_file = '.ts.' not in entry.key
+        blob = entry.value
+        self._nounce = get_nounce(entry.key)
+        payload = msgpack.unpackb(blob)
+        self._metadata = payload['metadata']
+        self._headbuffer = payload['buffer']
+
     def open(self, **kwargs):
         self._connect()
         self._read()
+        if not self._metadata:
+            raise diskfile.DiskFileNotExist()
+        if self._metadata.get('deleted', False):
+            raise diskfile.DiskFileDeleted(metadata=self._metadata)
+        return self
+
+    def reader(self, *args, **kwargs):
+        self._took_reader = True
         return self
 
     def close(self, **kwargs):
@@ -73,18 +138,9 @@ class DiskFile(diskfile.DiskFile):
             real_sock.close()
         self._metadata = None
 
-    def _read(self):
-        key = object_key(self.hashpath)
-        entry = self.conn.getPrevious(key).wait()
-        if not entry or not entry.key.startswith(key[:-1]):
-            self._metadata = {}  # mark object as "open"
-            return
-        self.data_file = '.ts.' not in entry.key
-        blob = entry.value
-        self._nounce = get_nounce(entry.key)
-        payload = msgpack.unpackb(blob)
-        self._metadata = payload['metadata']
-        self._headbuffer = payload['buffer']
+    def __exit__(self, t, v, tb):
+        if not self._took_reader:
+            self.close()
 
     def __iter__(self):
         if not self._metadata:
@@ -114,6 +170,7 @@ class DiskFile(diskfile.DiskFile):
         if diff >= self.disk_chunk_size:
             self._sync_buffer()
             self.last_sync = self.upload_size
+        return self.upload_size
 
     def _submit_write(self, key, blob):
         if len(self._pending_write) >= self.write_depth:
@@ -137,8 +194,8 @@ class DiskFile(diskfile.DiskFile):
         for resp in self._pending_write:
             resp.wait()
 
-    def put(self, metadata, extension='.data'):
-        if extension == '.ts':
+    def put(self, metadata):
+        if self._extension == '.ts':
             metadata['deleted'] = True
         self._sync_buffer()
         while self._buffer:
@@ -146,19 +203,19 @@ class DiskFile(diskfile.DiskFile):
         # zero index, chunk-count is len
         metadata['X-Kinetic-Chunk-Count'] = self._chunk_id
         metadata['X-Kinetic-Chunk-Nounce'] = self._nounce
-        metadata['name'] = self.name
+        metadata['name'] = self._name
         self._metadata = metadata
         payload = {'metadata': metadata, 'buffer': self._headbuffer}
         blob = msgpack.packb(payload)
-        timestamp = diskfile.normalize_timestamp(metadata['X-Timestamp'])
-        key = object_key(self.hashpath, timestamp, extension, self._nounce)
+        timestamp = diskfile.Timestamp(metadata['X-Timestamp'])
+        key = self.object_key(timestamp.internal, self._extension, self._nounce)
         self._submit_write(key, blob)
         self._wait_write()
         self._unlink_old(timestamp)
 
     def _unlink_old(self, req_timestamp):
-        start_key = object_key(self.hashpath)[:-1]
-        end_key = object_key(self.hashpath, timestamp=req_timestamp)
+        start_key = self.object_key()[:-1]
+        end_key = self.object_key(timestamp=req_timestamp.internal)
         resp = self.conn.getKeyRange(start_key, end_key, endKeyInclusive=False)
         head_keys = resp.wait()
         for key in head_keys:
@@ -182,24 +239,8 @@ class DiskFile(diskfile.DiskFile):
 
 class ObjectController(server.ObjectController):
 
-    def _diskfile(self, device, partition, account, container, obj, **kwargs):
-        """Utility method for instantiating a DiskFile."""
-        kwargs.setdefault('mount_check', self.mount_check)
-        kwargs.setdefault('bytes_per_sync', self.bytes_per_sync)
-        kwargs.setdefault('disk_chunk_size', self.disk_chunk_size)
-        kwargs.setdefault('threadpool', self.threadpools[device])
-        kwargs.setdefault('obj_dir', server.DATADIR)
-        return DiskFile(self.devices, device, partition, account,
-                        container, obj, self.logger, **kwargs)
-
-    def async_update(self, *args, **kwargs):
-        try:
-            return super(ObjectController, self).async_update(*args, **kwargs)
-        except OSError as e:
-            if e.errno != errno.ENOENT:
-                raise
-            self.logger.warning('Unable to sync object update '
-                                'with container server')
+    def setup(self, conf):
+        self._diskfile_mgr = DiskFileManager(conf, self.logger)
 
 
 def app_factory(global_conf, **local_conf):

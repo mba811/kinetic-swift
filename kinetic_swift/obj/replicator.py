@@ -17,9 +17,14 @@ from kinetic_swift.obj.server import object_key
 
 def split_key(key):
     parts = key.split('.')
+    storage_policy = parts[0]
+    if '-' in storage_policy:
+        base, policy_index = storage_policy.split('-', 1)
+    else:
+        policy_index = 0
     hashpath = parts[1]
     nounce = parts[-1]
-    return hashpath, nounce
+    return policy_index, hashpath, nounce
 
 
 class KineticReplicator(ObjectReplicator):
@@ -29,23 +34,24 @@ class KineticReplicator(ObjectReplicator):
         self.replication_mode = conf.get('kinetic_replication_mode', 'push')
 
     def iter_all_objects(self, conn):
-        keys = conn.getKeyRange('objects.', 'objects/')
+        keys = conn.getKeyRange('objects,', 'objects/')
         for key in keys.wait():
             # FIXME: clean up old tombstones
             yield key
 
     def find_target_devices(self, key):
-        hashpath = split_key(key)[0]
+        policy_index, hashpath, _junk = split_key(key)
+        object_ring = self.get_object_ring(policy_index)
         # ring magic, find all of the nodes for the partion of the given hash
         raw_digest = hashpath.decode('hex')
         part = struct.unpack_from('>I', raw_digest)[0] >> \
-            self.object_ring._part_shift
-        devices = self.object_ring.get_part_nodes(part)
+            object_ring._part_shift
+        devices = object_ring.get_part_nodes(part)
         return [d['device'] for d in devices]
 
     def iter_object_keys(self, conn, key):
         yield key
-        hashpath, nounce = split_key(key)
+        policy_index, hashpath, nounce = split_key(key)
         chunk_key = 'chunks.%s.%s' % (hashpath, nounce)
         resp = conn.getKeyRange(chunk_key + '.', chunk_key + '/')
         for key in resp.wait():
@@ -59,8 +65,8 @@ class KineticReplicator(ObjectReplicator):
 
     def is_object_on_target(self, target, key):
         # get key ready for getPrevious on target
-        hashpath, _nounce = split_key(key)
-        key = object_key(hashpath)
+        policy_index, hashpath, _nounce = split_key(key)
+        key = object_key(policy_index, hashpath)
 
         conn = self.get_conn(target)
         with conn:

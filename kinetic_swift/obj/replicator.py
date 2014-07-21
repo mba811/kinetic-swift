@@ -10,6 +10,7 @@ from swift.common.utils import parse_options
 from swift.common.daemon import run_daemon
 from swift.obj.replicator import ObjectReplicator
 from swift import gettext_ as _
+from swift.common.storage_policy import POLICIES
 
 from kinetic_swift.client import KineticSwiftClient
 from kinetic_swift.obj.server import object_key
@@ -92,7 +93,8 @@ class KineticReplicator(ObjectReplicator):
                 self.logger.exception('Unable to replicate %r to %r',
                                       key, target)
             else:
-                self.logger.info('successfully replicated %r to %r', key, target)
+                self.logger.info('successfully replicated %r to %r',
+                                 key, target)
                 success += 1
         if delete and success >= len(targets):
             # might be nice to drop the whole partition at once
@@ -133,7 +135,6 @@ class KineticReplicator(ObjectReplicator):
                 self.logger.exception('Unhandled exception with '
                                       'replication for device %r', device)
 
-
     def replicate(self, override_devices=None, **kwargs):
         self.start = time.time()
         self.suffix_count = 0
@@ -142,12 +143,16 @@ class KineticReplicator(ObjectReplicator):
         self.replication_count = 0
         self.last_replication_count = -1
         self.partition_times = []
-        devices = override_devices or [d['device'] for d in
-                                       self.object_ring.devs]
-        try:
-            self._replicate(*devices)
-        except Exception:
-            self.logger.exception(_("Exception in top-level replication loop"))
+        for policy in POLICIES:
+            obj_ring = self.get_object_ring(policy.idx)
+            devices = override_devices or [d['device'] for d in
+                                           obj_ring.devs]
+            self.logger.debug(_("Begin replication for %r"), policy)
+            try:
+                self._replicate(*devices)
+            except Exception:
+                self.logger.exception(
+                    _("Exception in top-level replication loop"))
         self.logger.info('replication cycle for %r complete', devices)
 
 

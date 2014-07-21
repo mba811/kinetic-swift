@@ -8,11 +8,9 @@ required_packages = [
   "java7-jdk",
   "maven",
   "libprotobuf-dev",
-  "python-distribute",
-  "ipython",
-  "gunicorn",
   "g++",  # msgpack ext wants this
   "screen",
+  "ipython",
 ]
 required_packages.each do |pkg|
   package pkg do
@@ -134,6 +132,7 @@ end
 [
   "/etc/kinetic",
   "/var/cache/swift/kinetic",
+  "/home/vagrant/.python-eggs",
 ].each do |d|
   directory d do
     owner "vagrant"

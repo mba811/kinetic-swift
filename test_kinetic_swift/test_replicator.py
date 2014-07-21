@@ -2,8 +2,6 @@ from contextlib import closing
 import cPickle as pickle
 import gzip
 import os
-import shutil
-import tempfile
 import time
 import random
 
@@ -41,7 +39,6 @@ def create_rings(data_dir, *ports):
         for replica in range(2):
             dev_id = device_id_gen.next()
             replica2part2device[replica].append(dev_id)
-
 
     for policy in storage_policy.POLICIES:
         object_ring_path = os.path.join(
@@ -101,6 +98,9 @@ class TestKineticReplicator(utils.KineticSwiftTestCase):
             with client:
                 resp = client.getKeyRange('chunks.', 'objects/')
             self.assertEquals(resp.wait(), [])
+
+    def test_replicate_all(self):
+        self.daemon.replicate()
 
     def test_replicate_one_object(self):
         source_port = self.ports[0]

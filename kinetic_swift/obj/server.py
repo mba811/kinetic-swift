@@ -33,7 +33,7 @@ def get_nounce(key):
     return key.rsplit('.', 1)[-1]
 
 
-def get_connection(host, port):
+def get_connection(host, port, **kwargs):
     return KineticSwiftClient(host, int(port))
 
 
@@ -41,6 +41,7 @@ class DiskFileManager(diskfile.DiskFileManager):
 
     def __init__(self, conf, logger):
         super(DiskFileManager, self).__init__(conf, logger)
+        self.connect_timeout = conf.get('connect_timeout', 10)
 
     def get_diskfile(self, device, *args, **kwargs):
         host, port = device.split(':')
@@ -76,7 +77,8 @@ class DiskFile(diskfile.DiskFile):
         # this is to neuter the context manager close in GET
         self._took_reader = False
         super(DiskFile, self).__init__(mgr, device_path, *args, **kwargs)
-        self.conn = get_connection(host, port)
+        self.conn = get_connection(host, port,
+                                   connect_timeout=self._mgr.connect_timeout)
         self.hashpath = os.path.basename(self._datadir.rstrip('/'))
         self._buffer = ''
         # this is the first "disk_chunk_size" + metadata

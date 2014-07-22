@@ -5,6 +5,7 @@ execute "apt-get-update" do
 end
 
 required_packages = [
+  "build-essential",
   "java7-jdk",
   "maven",
   "libprotobuf-dev",

@@ -4,7 +4,6 @@ from contextlib import contextmanager
 from collections import deque
 from uuid import uuid4
 import socket
-import errno
 
 import msgpack
 from swift.obj import diskfile, server
@@ -34,7 +33,7 @@ def get_nounce(key):
 
 
 def get_connection(host, port, **kwargs):
-    return KineticSwiftClient(host, int(port))
+    return KineticSwiftClient(host, int(port), **kwargs)
 
 
 class DiskFileManager(diskfile.DiskFileManager):
@@ -210,7 +209,8 @@ class DiskFile(diskfile.DiskFile):
         payload = {'metadata': metadata, 'buffer': self._headbuffer}
         blob = msgpack.packb(payload)
         timestamp = diskfile.Timestamp(metadata['X-Timestamp'])
-        key = self.object_key(timestamp.internal, self._extension, self._nounce)
+        key = self.object_key(timestamp.internal, self._extension,
+                              self._nounce)
         self._submit_write(key, blob)
         self._wait_write()
         self._unlink_old(timestamp)
@@ -222,6 +222,7 @@ class DiskFile(diskfile.DiskFile):
         head_keys = resp.wait()
         for key in head_keys:
             nounce = get_nounce(key)
+
             def key_gen():
                 yield key
                 i = 1

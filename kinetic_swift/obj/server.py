@@ -91,7 +91,7 @@ class DiskFile(diskfile.DiskFile):
         try:
             self._connect()
         except socket.error:
-            self.logger.exception(
+            self._mgr.logger.exception(
                 'unable to connect to %s:%s' % (
                     self.conn.hostname, self.conn.port))
             self.conn.close()

@@ -41,6 +41,7 @@ class DiskFileManager(diskfile.DiskFileManager):
     def __init__(self, conf, logger):
         super(DiskFileManager, self).__init__(conf, logger)
         self.connect_timeout = conf.get('connect_timeout', 10)
+        self.write_depth = conf.get('write_depth', DEFAULT_DEPTH)
 
     def get_diskfile(self, device, *args, **kwargs):
         host, port = device.split(':')
@@ -86,7 +87,7 @@ class DiskFile(diskfile.DiskFile):
         self.upload_size = 0
         self.last_sync = 0
         # configurables
-        self.write_depth = DEFAULT_DEPTH
+        self.write_depth = self._mgr.write_depth
         try:
             self._connect()
         except socket.error:

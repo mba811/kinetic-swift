@@ -6,7 +6,7 @@ from kinetic import greenclient
 
 from kinetic_swift.obj import server
 
-from utils import KineticSwiftTestCase, debug_logger, patch_policies
+from utils import KineticSwiftTestCase, debug_logger
 
 
 class TestDiskFile(KineticSwiftTestCase):
@@ -19,6 +19,19 @@ class TestDiskFile(KineticSwiftTestCase):
         self.logger = debug_logger('test-kinetic')
         self.mgr = server.DiskFileManager({}, self.logger)
         self.policy = random.choice(list(server.diskfile.POLICIES))
+
+    def test_manager_config(self):
+        conf = {
+            'connect_timeout': 10,
+            'write_depth': 2,
+            'disk_chunk_size': 2 ** 20,
+        }
+        mgr = server.DiskFileManager(conf, self.logger)
+        df = mgr.get_diskfile(self.device, '0', 'a', 'c', self.buildKey('o'),
+                              policy_idx=int(self.policy))
+        self.assertEqual(df.conn.connect_timeout, 10)
+        self.assertEqual(df.write_depth, 2)
+        self.assertEqual(df.disk_chunk_size, 2 ** 20)
 
     def test_create(self):
         df = self.mgr.get_diskfile(self.device, '0', 'a', 'c',
@@ -197,7 +210,6 @@ class TestDiskFile(KineticSwiftTestCase):
         with self.client:
             keys = self.client.getKeyRange(start_key, end_key).wait()
         self.assertEqual(disk_chunk_count, len(keys))
-
 
 
 if __name__ == "__main__":

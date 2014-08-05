@@ -12,6 +12,16 @@ from kinetic_swift.client import KineticSwiftClient
 
 DEFAULT_DEPTH = 16
 
+SYNC_WRITETHROUGH = 1
+SYNC_WRITEBACK = 2
+SYNC_FLUSH = 3
+
+SYNC_OPTION_MAP = {
+    'writethrough': SYNC_WRITETHROUGH,
+    'writeback': SYNC_WRITEBACK,
+    'flush': SYNC_FLUSH,
+}
+
 
 def chunk_key(hashpath, nounce, index):
     return 'chunks.%s.%s.%0.32d' % (hashpath, nounce, index)
@@ -42,6 +52,12 @@ class DiskFileManager(diskfile.DiskFileManager):
         super(DiskFileManager, self).__init__(conf, logger)
         self.connect_timeout = conf.get('connect_timeout', 10)
         self.write_depth = conf.get('write_depth', DEFAULT_DEPTH)
+        raw_sync_option = conf.get('synchronization', 'writethrough').lower()
+        try:
+            self.synchronization = SYNC_OPTION_MAP[raw_sync_option]
+        except KeyError:
+            raise ValueError('Invalid synchronization option, choices are %r' %
+                             SYNC_OPTION_MAP.keys())
 
     def get_diskfile(self, device, *args, **kwargs):
         host, port = device.split(':')
@@ -88,6 +104,7 @@ class DiskFile(diskfile.DiskFile):
         self.last_sync = 0
         # configurables
         self.write_depth = self._mgr.write_depth
+        self.synchronization = self._mgr.synchronization
         try:
             self._connect()
         except socket.error:
@@ -174,10 +191,15 @@ class DiskFile(diskfile.DiskFile):
             self.last_sync = self.upload_size
         return self.upload_size
 
-    def _submit_write(self, key, blob):
+    def _submit_write(self, key, blob, final=True):
         if len(self._pending_write) >= self.write_depth:
             self._pending_write.popleft().wait()
-        pending_resp = self.conn.put(key, blob, force=True)
+        if self.synchronization == SYNC_FLUSH and not final:
+            synchronization = SYNC_WRITEBACK
+        else:
+            synchronization = self.synchronization
+        pending_resp = self.conn.put(key, blob, force=True,
+                                     synchronization=synchronization)
         self._pending_write.append(pending_resp)
 
     def _sync_buffer(self):
@@ -189,7 +211,8 @@ class DiskFile(diskfile.DiskFile):
             # write out the chunk buffer!
             self._chunk_id += 1
             key = chunk_key(self.hashpath, self._nounce, self._chunk_id)
-            self._submit_write(key, self._buffer[:self.disk_chunk_size])
+            self._submit_write(key, self._buffer[:self.disk_chunk_size],
+                               final=False)
         self._buffer = self._buffer[self.disk_chunk_size:]
 
     def _wait_write(self):
@@ -212,7 +235,7 @@ class DiskFile(diskfile.DiskFile):
         timestamp = diskfile.Timestamp(metadata['X-Timestamp'])
         key = self.object_key(timestamp.internal, self._extension,
                               self._nounce)
-        self._submit_write(key, blob)
+        self._submit_write(key, blob, final=True)
         self._wait_write()
         self._unlink_old(timestamp)
 

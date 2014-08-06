@@ -122,13 +122,15 @@ class DiskFile(diskfile.DiskFile):
         self.read_depth = self._mgr.read_depth
         self.delete_depth = self._mgr.delete_depth
         self.synchronization = self._mgr.synchronization
+        self.conn = None
         try:
             self.conn = mgr.get_connection(host, port)
         except socket.error:
             self._mgr.logger.exception(
                 'unable to connect to %s:%s' % (
-                    self.conn.hostname, self.conn.port))
-            self.conn.close()
+                    host, port))
+            if self.conn:
+                self.conn.close()
             raise diskfile.DiskFileDeviceUnavailable()
 
     def object_key(self, *args, **kwargs):

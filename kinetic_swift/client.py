@@ -2,6 +2,7 @@ from kinetic.greenclient import GreenClient
 from kinetic.baseclient import BaseClient
 from kinetic import operations
 
+
 class KineticSwiftClient(GreenClient):
 
     def close(self, *args, **kwargs):

@@ -23,8 +23,13 @@ SYNC_OPTION_MAP = {
 }
 
 
-def chunk_key(hashpath, nounce, index):
-    return 'chunks.%s.%s.%0.32d' % (hashpath, nounce, index)
+def chunk_key(hashpath, nounce, index=None):
+    if index is None:
+        # for use with getKeyRange
+        key = 'chunks.%s.%s/' % (hashpath, nounce)
+    else:
+        key = 'chunks.%s.%s.%0.32d' % (hashpath, nounce, index)
+    return key
 
 
 def object_key(policy_index, hashpath, timestamp='',
@@ -52,6 +57,7 @@ class DiskFileManager(diskfile.DiskFileManager):
         super(DiskFileManager, self).__init__(conf, logger)
         self.connect_timeout = conf.get('connect_timeout', 10)
         self.write_depth = conf.get('write_depth', DEFAULT_DEPTH)
+        self.delete_depth = conf.get('delete_depth', DEFAULT_DEPTH)
         raw_sync_option = conf.get('synchronization', 'writethrough').lower()
         try:
             self.synchronization = SYNC_OPTION_MAP[raw_sync_option]
@@ -104,6 +110,7 @@ class DiskFile(diskfile.DiskFile):
         self.last_sync = 0
         # configurables
         self.write_depth = self._mgr.write_depth
+        self.delete_depth = self._mgr.delete_depth
         self.synchronization = self._mgr.synchronization
         try:
             self._connect()
@@ -244,18 +251,31 @@ class DiskFile(diskfile.DiskFile):
         end_key = self.object_key(timestamp=req_timestamp.internal)
         resp = self.conn.getKeyRange(start_key, end_key, endKeyInclusive=False)
         head_keys = resp.wait()
-        for key in head_keys:
-            nounce = get_nounce(key)
+        pending = deque()
+        for head_key in head_keys:
+            nounce = get_nounce(head_key)
 
             def key_gen():
-                yield key
-                i = 1
-                while True:
-                    missing = yield chunk_key(self.hashpath, nounce, i)
-                    i += 1
-                    if missing:
+                start_key = chunk_key(self.hashpath, nounce, 0)
+                end_key = chunk_key(self.hashpath, nounce)
+                resp = self.conn.getKeyRange(start_key, end_key,
+                                             endKeyInclusive=False)
+                chunk_keys = resp.wait()
+                for key in chunk_keys:
+                    yield key
+                yield head_key
+
+            for key in key_gen():
+                print 'deleting', key
+                while len(pending) >= self.delete_depth:
+                    found = pending.popleft().wait()
+                    print found
+                    if not found:
                         break
-            self.conn.delete_keys(key_gen(), depth=4)
+                pending.append(self.conn.delete(key, force=True))
+
+        for resp in pending:
+            resp.wait()
 
     def quarantine(self):
         pass

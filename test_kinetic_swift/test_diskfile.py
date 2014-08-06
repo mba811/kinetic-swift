@@ -2,6 +2,8 @@ import time
 import unittest
 import random
 
+from swift.common.utils import Timestamp
+
 from kinetic import greenclient
 
 from kinetic_swift.obj import server
@@ -24,6 +26,7 @@ class TestDiskFile(KineticSwiftTestCase):
         conf = {
             'connect_timeout': 10,
             'write_depth': 2,
+            'delete_depth': 4,
             'disk_chunk_size': 2 ** 20,
         }
         mgr = server.DiskFileManager(conf, self.logger)
@@ -31,6 +34,7 @@ class TestDiskFile(KineticSwiftTestCase):
                               policy_idx=int(self.policy))
         self.assertEqual(df.conn.connect_timeout, 10)
         self.assertEqual(df.write_depth, 2)
+        self.assertEqual(df.delete_depth, 4)
         self.assertEqual(df.disk_chunk_size, 2 ** 20)
 
     def test_config_sync_options(self):
@@ -231,6 +235,24 @@ class TestDiskFile(KineticSwiftTestCase):
         finally:
             df.close()
 
+        # check object keys
+        storage_policy = server.diskfile.get_data_dir(int(self.policy))
+        start_key = '%s.%s' % (storage_policy, df.hashpath)
+        end_key = '%s.%s/' % (storage_policy, df.hashpath)
+        with self.client:
+            keys = self.client.getKeyRange(start_key, end_key).wait()
+        self.assertEqual(1, len(keys))  # the tombstone!
+        for key in keys:
+            expected = start_key + '.%s.ts' % Timestamp(req_timestamp).internal
+            self.assert_(key.startswith(expected))
+
+        # check chunk keys
+        start_key = 'chunks.%s' % df.hashpath
+        end_key = 'chunks.%s/' % df.hashpath
+        with self.client:
+            keys = self.client.getKeyRange(start_key, end_key).wait()
+        self.assertEqual(0, len(keys))
+
     def test_overwrite(self):
         num_chunks = 3
         disk_chunk_size = 10
@@ -267,7 +289,6 @@ class TestDiskFile(KineticSwiftTestCase):
         self.assertEquals(body, '\x01' * (disk_chunk_size * num_chunks))
 
         # check object keys
-
         storage_policy = server.diskfile.get_data_dir(int(self.policy))
         start_key = '%s.%s' % (storage_policy, df.hashpath)
         end_key = '%s.%s/' % (storage_policy, df.hashpath)

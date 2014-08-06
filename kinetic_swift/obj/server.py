@@ -18,7 +18,7 @@ SYNC_WRITEBACK = 2
 SYNC_FLUSH = 3
 
 SYNC_OPTION_MAP = {
-    'invalid': SYNC_INVALID,
+    'default': SYNC_INVALID,
     'writethrough': SYNC_WRITETHROUGH,
     'writeback': SYNC_WRITEBACK,
     'flush': SYNC_FLUSH,
@@ -60,7 +60,7 @@ class DiskFileManager(diskfile.DiskFileManager):
         self.connect_timeout = conf.get('connect_timeout', 10)
         self.write_depth = conf.get('write_depth', DEFAULT_DEPTH)
         self.delete_depth = conf.get('delete_depth', DEFAULT_DEPTH)
-        raw_sync_option = conf.get('synchronization', 'writethrough').lower()
+        raw_sync_option = conf.get('synchronization', 'default').lower()
         try:
             self.synchronization = SYNC_OPTION_MAP[raw_sync_option]
         except KeyError:

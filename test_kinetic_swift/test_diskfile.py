@@ -39,7 +39,7 @@ class TestDiskFile(KineticSwiftTestCase):
 
     def test_config_sync_options(self):
         expectations = {
-            'invalid': -1,
+            'default': -1,
             'writethrough': 1,
             'writeback': 2,
             'flush': 3,
@@ -87,7 +87,7 @@ class TestDiskFile(KineticSwiftTestCase):
                                  v, k, metadata[k]))
 
     def test_submit_write_all_sync_options(self):
-        for sync_option in ('flush', 'writeback', 'writethrough', 'invalid'):
+        for sync_option in ('flush', 'writeback', 'writethrough', 'default'):
             conf = {'synchronization': sync_option}
             mgr = server.DiskFileManager(conf, self.logger)
             df = mgr.get_diskfile(self.device, '0', 'a', 'c',
@@ -119,7 +119,7 @@ class TestDiskFile(KineticSwiftTestCase):
         conf = {
             'disk_chunk_size': 10,
         }
-        for sync_option in ('flush', 'writeback', 'writethrough', 'invalid'):
+        for sync_option in ('flush', 'writeback', 'writethrough', 'default'):
             conf['synchronization'] = sync_option
             mgr = server.DiskFileManager(conf, self.logger)
             df = mgr.get_diskfile(self.device, '0', 'a', 'c',

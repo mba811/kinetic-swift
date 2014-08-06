@@ -268,10 +268,8 @@ class DiskFile(diskfile.DiskFile):
                 yield head_key
 
             for key in key_gen():
-                print 'deleting', key
                 while len(pending) >= self.delete_depth:
                     found = pending.popleft().wait()
-                    print found
                     if not found:
                         break
                 pending.append(self.conn.delete(key, force=True))

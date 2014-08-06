@@ -10,7 +10,7 @@ from swift.obj import diskfile, server
 
 from kinetic_swift.client import KineticSwiftClient
 
-DEFAULT_DEPTH = 16
+DEFAULT_DEPTH = 2
 
 SYNC_INVALID = -1
 SYNC_WRITETHROUGH = 1
@@ -49,16 +49,13 @@ def get_nounce(key):
     return key.rsplit('.', 1)[-1]
 
 
-def get_connection(host, port, **kwargs):
-    return KineticSwiftClient(host, int(port), **kwargs)
-
-
 class DiskFileManager(diskfile.DiskFileManager):
 
     def __init__(self, conf, logger):
         super(DiskFileManager, self).__init__(conf, logger)
         self.connect_timeout = conf.get('connect_timeout', 10)
         self.write_depth = conf.get('write_depth', DEFAULT_DEPTH)
+        self.read_depth = conf.get('read_depth', DEFAULT_DEPTH)
         self.delete_depth = conf.get('delete_depth', DEFAULT_DEPTH)
         raw_sync_option = conf.get('synchronization', 'default').lower()
         try:
@@ -66,6 +63,7 @@ class DiskFileManager(diskfile.DiskFileManager):
         except KeyError:
             raise ValueError('Invalid synchronization option, choices are %r' %
                              SYNC_OPTION_MAP.keys())
+        self.conn_pool = {}
 
     def get_diskfile(self, device, *args, **kwargs):
         host, port = device.split(':')
@@ -75,6 +73,17 @@ class DiskFileManager(diskfile.DiskFileManager):
     def pickle_async_update(self, device, account, container, obj, data,
                             timestamp, policy_idx):
         pass
+
+    def _new_connection(self, host, port, **kwargs):
+        kwargs.setdefault('connect_timeout', self.connect_timeout)
+        return KineticSwiftClient(host, int(port), **kwargs)
+
+    def get_connection(self, host, port, **kwargs):
+        key = (host, port)
+        if key not in self.conn_pool:
+            self.conn_pool[key] = self._new_connection(host, port, **kwargs)
+        # TODO check for faulted, pool_recycle, etc
+        return self.conn_pool[key]
 
 
 class DiskFileReader(diskfile.DiskFileReader):
@@ -101,8 +110,6 @@ class DiskFile(diskfile.DiskFile):
         # this is to neuter the context manager close in GET
         self._took_reader = False
         super(DiskFile, self).__init__(mgr, device_path, *args, **kwargs)
-        self.conn = get_connection(host, port,
-                                   connect_timeout=self._mgr.connect_timeout)
         self.hashpath = os.path.basename(self._datadir.rstrip('/'))
         self._buffer = ''
         # this is the first "disk_chunk_size" + metadata
@@ -112,23 +119,22 @@ class DiskFile(diskfile.DiskFile):
         self.last_sync = 0
         # configurables
         self.write_depth = self._mgr.write_depth
+        self.read_depth = self._mgr.read_depth
         self.delete_depth = self._mgr.delete_depth
         self.synchronization = self._mgr.synchronization
+        self.conn = None
         try:
-            self._connect()
+            self.conn = mgr.get_connection(host, port)
         except socket.error:
             self._mgr.logger.exception(
                 'unable to connect to %s:%s' % (
-                    self.conn.hostname, self.conn.port))
-            self.conn.close()
+                    host, port))
+            if self.conn:
+                self.conn.close()
             raise diskfile.DiskFileDeviceUnavailable()
 
     def object_key(self, *args, **kwargs):
         return object_key(self.policy_index, self.hashpath, *args, **kwargs)
-
-    def _connect(self):
-        if not self.conn.isConnected:
-            self.conn.connect()
 
     def _read(self):
         key = self.object_key()
@@ -144,7 +150,6 @@ class DiskFile(diskfile.DiskFile):
         self._headbuffer = payload['buffer']
 
     def open(self, **kwargs):
-        self._connect()
         self._read()
         if not self._metadata:
             raise diskfile.DiskFileNotExist()
@@ -157,13 +162,6 @@ class DiskFile(diskfile.DiskFile):
         return self
 
     def close(self, **kwargs):
-        real_sock = None
-        green_sock = self.conn._socket
-        if hasattr(green_sock, 'fd'):
-            real_sock = getattr(green_sock.fd, '_sock', None)
-        self.conn.close()
-        if real_sock:
-            real_sock.close()
         self._metadata = None
 
     def __exit__(self, t, v, tb):
@@ -176,7 +174,15 @@ class DiskFile(diskfile.DiskFile):
         yield self._headbuffer
         keys = [chunk_key(self.hashpath, self._nounce, i + 1) for i in
                 range(int(self._metadata['X-Kinetic-Chunk-Count']))]
-        for entry in self.conn.get_keys(keys):
+
+        pending = deque()
+        for key in keys:
+            while len(pending) >= self.read_depth:
+                entry = pending.popleft().wait()
+                yield str(entry.value)
+            pending.append(self.conn.get(key))
+        for resp in pending:
+            entry = resp.wait()
             yield str(entry.value)
 
     @contextmanager
@@ -184,7 +190,6 @@ class DiskFile(diskfile.DiskFile):
         self._headbuffer = None
         self._nounce = str(uuid4())
         try:
-            self._connect()
             self._pending_write = deque()
             yield self
         finally:

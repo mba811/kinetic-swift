@@ -4,8 +4,7 @@ import random
 
 from swift.common.utils import Timestamp
 
-from kinetic import greenclient
-
+from kinetic_swift.client import KineticSwiftClient
 from kinetic_swift.obj import server
 
 from utils import KineticSwiftTestCase, debug_logger
@@ -32,7 +31,7 @@ class TestDiskFile(KineticSwiftTestCase):
         mgr = server.DiskFileManager(conf, self.logger)
         df = mgr.get_diskfile(self.device, '0', 'a', 'c', self.buildKey('o'),
                               policy_idx=int(self.policy))
-        self.assertEqual(df.conn.connect_timeout, 10)
+        self.assertEqual(df.conn.conn.connect_timeout, 10)
         self.assertEqual(df.write_depth, 2)
         self.assertEqual(df.delete_depth, 4)
         self.assertEqual(df.disk_chunk_size, 2 ** 20)
@@ -53,7 +52,7 @@ class TestDiskFile(KineticSwiftTestCase):
         df = self.mgr.get_diskfile(self.device, '0', 'a', 'c',
                                    self.buildKey('o'),
                                    policy_idx=int(self.policy))
-        self.assert_(isinstance(df.conn, greenclient.GreenClient))
+        self.assert_(isinstance(df.conn, KineticSwiftClient))
 
     def test_put(self):
         df = self.mgr.get_diskfile(self.device, '0', 'a', 'c',
@@ -240,8 +239,7 @@ class TestDiskFile(KineticSwiftTestCase):
         storage_policy = server.diskfile.get_data_dir(int(self.policy))
         start_key = '%s.%s' % (storage_policy, df.hashpath)
         end_key = '%s.%s/' % (storage_policy, df.hashpath)
-        with self.client:
-            keys = self.client.getKeyRange(start_key, end_key).wait()
+        keys = self.client.getKeyRange(start_key, end_key).wait()
         self.assertEqual(1, len(keys))  # the tombstone!
         for key in keys:
             expected = start_key + '.%s.ts' % Timestamp(req_timestamp).internal
@@ -250,8 +248,7 @@ class TestDiskFile(KineticSwiftTestCase):
         # check chunk keys
         start_key = 'chunks.%s' % df.hashpath
         end_key = 'chunks.%s/' % df.hashpath
-        with self.client:
-            keys = self.client.getKeyRange(start_key, end_key).wait()
+        keys = self.client.getKeyRange(start_key, end_key).wait()
         self.assertEqual(0, len(keys))
 
     def test_overwrite(self):
@@ -293,15 +290,13 @@ class TestDiskFile(KineticSwiftTestCase):
         storage_policy = server.diskfile.get_data_dir(int(self.policy))
         start_key = '%s.%s' % (storage_policy, df.hashpath)
         end_key = '%s.%s/' % (storage_policy, df.hashpath)
-        with self.client:
-            keys = self.client.getKeyRange(start_key, end_key).wait()
+        keys = self.client.getKeyRange(start_key, end_key).wait()
         self.assertEqual(1, len(keys))
 
         # check chunk keys
         start_key = 'chunks.%s' % df.hashpath
         end_key = 'chunks.%s/' % df.hashpath
-        with self.client:
-            keys = self.client.getKeyRange(start_key, end_key).wait()
+        keys = self.client.getKeyRange(start_key, end_key).wait()
         self.assertEqual(disk_chunk_count, len(keys))
 
 

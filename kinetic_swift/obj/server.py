@@ -12,11 +12,13 @@ from kinetic_swift.client import KineticSwiftClient
 
 DEFAULT_DEPTH = 16
 
+SYNC_INVALID = -1
 SYNC_WRITETHROUGH = 1
 SYNC_WRITEBACK = 2
 SYNC_FLUSH = 3
 
 SYNC_OPTION_MAP = {
+    'invalid': SYNC_INVALID,
     'writethrough': SYNC_WRITETHROUGH,
     'writeback': SYNC_WRITEBACK,
     'flush': SYNC_FLUSH,

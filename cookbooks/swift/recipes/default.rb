@@ -167,7 +167,7 @@ cookbook_file "/etc/swift/proxy-server.conf" do
 end
 
 
-["object", "container", "account"].each_with_index do |server, p|
+["container", "account"].each_with_index do |server, p|
   directory "/etc/swift/#{server}-server" do
     owner "vagrant"
     group "vagrant"
@@ -186,10 +186,43 @@ end
       group "vagrant"
       variables({
          :srv_path => "/srv/node#{i}",
-         :bind_port => "60#{i}#{p}",
+         :bind_port => "60#{i}#{p + 1}",
          :recon_cache_path => "/var/cache/swift/node#{i}",
       })
     end
+  end
+end
+
+directory "/etc/swift/object-server" do
+  owner "vagrant"
+  group "vagrant"
+  action :create
+end
+
+cookbook_file "/etc/swift/object-server/base.conf-template" do
+  source "etc/swift/object-server/base.conf-template"
+  owner "vagrant"
+  group "vagrant"
+end
+
+(1..4).each do |i|
+  directory "/etc/swift/object-server/#{i}.conf.d" do
+    owner "vagrant"
+    group "vagrant"
+    action :create
+  end
+  link "/etc/swift/object-server/#{i}.conf.d/00_base.conf" do
+    to "/etc/swift/object-server/base.conf-template"
+  end
+  template "/etc/swift/object-server/#{i}.conf.d/10_default.conf" do
+    source "etc/swift/object-server.conf.erb"
+    owner "vagrant"
+    group "vagrant"
+    variables({
+       :srv_path => "/srv/node#{i}",
+       :bind_port => "60#{i}0",
+       :recon_cache_path => "/var/cache/swift/node#{i}",
+    })
   end
 end
 

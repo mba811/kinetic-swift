@@ -179,13 +179,7 @@ end
     group "vagrant"
     action :create
   end
-  execute "move-#{i}-base-conf" do
-    cwd "/etc/swift/object-server"
-    command "mv #{i}.conf #{i}.conf.d/00_base.conf" 
-    creates "/etc/swift/object-server/#{i}.conf.d/00_base.conf"
-    action :run
-  end
-  cookbook_file "/etc/swift/object-server/#{i}.conf.d/10_plugin.conf" do
+  cookbook_file "/etc/swift/object-server/#{i}.conf.d/20_plugin.conf" do
     source "etc/swift/object-server.conf"
     owner "vagrant"
     group "vagrant"

@@ -9,11 +9,10 @@ import time
 import unittest
 
 import eventlet
-import kinetic
 
 from kinetic_swift.client import KineticSwiftClient
 
-from test.unit import debug_logger, patch_policies, write_fake_ring
+from test.unit import debug_logger, patch_policies
 
 
 JAR_PATH = os.environ['KINETIC_JAR']
@@ -54,6 +53,7 @@ def start_simulators(data_dir, *ports):
                                 'simulators running...' % sim_map[port].pid)
     return sim_map
 
+
 def teardown_simulators(sim_map):
     for proc in sim_map.values():
         try:
@@ -71,6 +71,7 @@ class KineticSwiftTestCase(unittest.TestCase):
     PORTS = (9123,)
 
     def setUp(self):
+        self.logger = debug_logger()
         self.test_dir = tempfile.mkdtemp()
         self.ports = self.PORTS
         self._sim_map = {}
@@ -78,7 +79,8 @@ class KineticSwiftTestCase(unittest.TestCase):
             self._sim_map = start_simulators(self.test_dir, *self.ports)
             self.client_map = {}
             for port in self.ports:
-                self.client_map[port] = KineticSwiftClient('localhost', port)
+                self.client_map[port] = KineticSwiftClient(
+                    self.logger, 'localhost', port)
         except Exception:
             e, v, t = sys.exc_info()
             self.tearDown()
@@ -90,5 +92,3 @@ class KineticSwiftTestCase(unittest.TestCase):
 
     def buildKey(self, key):
         return 'test/kinetic_swift/%s/%s' % (self.id(), key)
-
-

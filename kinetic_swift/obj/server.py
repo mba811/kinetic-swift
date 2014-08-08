@@ -1,14 +1,16 @@
 import os
 os.environ['PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION'] = 'cpp'
+import logging
 from contextlib import contextmanager
 from collections import deque
 from uuid import uuid4
-import socket
+from eventlet import sleep, Timeout
 
 import msgpack
 from swift.obj import diskfile, server
 
 from kinetic_swift.client import KineticSwiftClient
+
 
 DEFAULT_DEPTH = 2
 
@@ -53,10 +55,12 @@ class DiskFileManager(diskfile.DiskFileManager):
 
     def __init__(self, conf, logger):
         super(DiskFileManager, self).__init__(conf, logger)
-        self.connect_timeout = conf.get('connect_timeout', 10)
-        self.write_depth = conf.get('write_depth', DEFAULT_DEPTH)
-        self.read_depth = conf.get('read_depth', DEFAULT_DEPTH)
-        self.delete_depth = conf.get('delete_depth', DEFAULT_DEPTH)
+        self.connect_timeout = int(conf.get('connect_timeout', 3))
+        self.response_timeout = int(conf.get('response_timeout', 30))
+        self.connect_retry = int(conf.get('connect_retry', 3))
+        self.write_depth = int(conf.get('write_depth', DEFAULT_DEPTH))
+        self.read_depth = int(conf.get('read_depth', DEFAULT_DEPTH))
+        self.delete_depth = int(conf.get('delete_depth', DEFAULT_DEPTH))
         raw_sync_option = conf.get('synchronization', 'default').lower()
         try:
             self.synchronization = SYNC_OPTION_MAP[raw_sync_option]
@@ -76,14 +80,38 @@ class DiskFileManager(diskfile.DiskFileManager):
 
     def _new_connection(self, host, port, **kwargs):
         kwargs.setdefault('connect_timeout', self.connect_timeout)
-        return KineticSwiftClient(host, int(port), **kwargs)
+        kwargs.setdefault('response_timeout', self.response_timeout)
+        for i in range(1, self.connect_retry + 1):
+            try:
+                return KineticSwiftClient(self.logger, host, int(port),
+                                          **kwargs)
+            except Timeout:
+                self.logger.warning('Drive %s:%s connect timeout #%d (%ds)' % (
+                    host, port, i, self.connect_timeout))
+            except Exception:
+                self.logger.exception('Drive %s:%s connection error #%d' % (
+                    host, port, i))
+            if i < self.connect_retry:
+                sleep(1)
+        msg = 'Unable to connect to drive %s:%s after %s attempts' % (
+            host, port, i)
+        self.logger.error(msg)
+        raise diskfile.DiskFileDeviceUnavailable()
 
     def get_connection(self, host, port, **kwargs):
         key = (host, port)
-        if key not in self.conn_pool:
-            self.conn_pool[key] = self._new_connection(host, port, **kwargs)
-        # TODO check for faulted, pool_recycle, etc
-        return self.conn_pool[key]
+        conn = None
+        try:
+            conn = self.conn_pool[key]
+        except KeyError:
+            pass
+        if conn and conn.faulted:
+            conn.close()
+            conn = None
+        if not conn:
+            conn = self.conn_pool[key] = self._new_connection(
+                host, port, **kwargs)
+        return conn
 
 
 class DiskFileReader(diskfile.DiskFileReader):
@@ -123,15 +151,7 @@ class DiskFile(diskfile.DiskFile):
         self.delete_depth = self._mgr.delete_depth
         self.synchronization = self._mgr.synchronization
         self.conn = None
-        try:
-            self.conn = mgr.get_connection(host, port)
-        except socket.error:
-            self._mgr.logger.exception(
-                'unable to connect to %s:%s' % (
-                    host, port))
-            if self.conn:
-                self.conn.close()
-            raise diskfile.DiskFileDeviceUnavailable()
+        self.conn = mgr.get_connection(host, port)
 
     def object_key(self, *args, **kwargs):
         return object_key(self.policy_index, self.hashpath, *args, **kwargs)

@@ -23,15 +23,19 @@ class TestDiskFile(KineticSwiftTestCase):
 
     def test_manager_config(self):
         conf = {
-            'connect_timeout': 10,
-            'write_depth': 2,
-            'delete_depth': 4,
-            'disk_chunk_size': 2 ** 20,
+            'connect_retry': '6',
+            'connect_timeout': '10',
+            'response_timeout': '90',
+            'write_depth': '2',
+            'delete_depth': '4',
+            'disk_chunk_size': '%s' % 2 ** 20,
         }
         mgr = server.DiskFileManager(conf, self.logger)
+        self.assertEqual(mgr.connect_retry, 6)
         df = mgr.get_diskfile(self.device, '0', 'a', 'c', self.buildKey('o'),
                               policy_idx=int(self.policy))
         self.assertEqual(df.conn.conn.connect_timeout, 10)
+        self.assertEqual(df.conn.response_timeout, 90)
         self.assertEqual(df.write_depth, 2)
         self.assertEqual(df.delete_depth, 4)
         self.assertEqual(df.disk_chunk_size, 2 ** 20)

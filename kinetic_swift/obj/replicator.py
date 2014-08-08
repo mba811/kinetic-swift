@@ -32,7 +32,7 @@ class KineticReplicator(ObjectReplicator):
 
     def __init__(self, conf):
         super(KineticReplicator, self).__init__(conf)
-        self.replication_mode = conf.get('kinetic_replication_mode', 'push')
+        self.replication_mode = conf.get('kinetic_replication_mode', 'copy')
 
     def iter_all_objects(self, conn):
         keys = conn.getKeyRange('objects,', 'objects/')
@@ -70,13 +70,12 @@ class KineticReplicator(ObjectReplicator):
         key = object_key(policy_index, hashpath)
 
         conn = self.get_conn(target)
-        with conn:
-            entry = conn.getPrevious(key).wait()
+        entry = conn.getPrevious(key).wait()
         return entry and entry.key.startswith(key[:-1])
 
     def get_conn(self, device):
         host, port = device.split(':')
-        conn = KineticSwiftClient(host, int(port))
+        conn = KineticSwiftClient(self.logger, host, int(port))
         return conn
 
     def replicate_object(self, conn, key, targets, delete=False):
@@ -125,8 +124,7 @@ class KineticReplicator(ObjectReplicator):
                 # might be a good place to go multiprocess
                 conn = self.get_conn(device)
                 try:
-                    with conn as conn:
-                        self.replicate_device(device, conn)
+                    self.replicate_device(device, conn)
                 except socket.error as e:
                     if e.errno != errno.ECONNREFUSED:
                         raise

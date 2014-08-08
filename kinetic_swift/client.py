@@ -1,9 +1,9 @@
+from collections import deque
 import errno
 from eventlet import Timeout, spawn_n
 
 from kinetic.asyncclient import AsyncClient
 from kinetic.greenclient import Response as BaseResponse
-from kinetic import operations
 
 
 class Response(BaseResponse):
@@ -98,7 +98,7 @@ class KineticSwiftClient(object):
 
     def copy_keys(self, target, keys, depth=16):
         host, port = target.split(':')
-        target = self.__class__(host, int(port))
+        target = self.__class__(self.logger, host, int(port))
 
         def write_entry(entry):
             target.put(entry.key, entry.value, force=True)
@@ -106,7 +106,37 @@ class KineticSwiftClient(object):
         def blow_up(*args, **kwargs):
             raise Exception('do something %r %r' % (args, kwargs))
 
-        with target:
-            for key in keys:
-                self._processAsync(operations.Get, write_entry, blow_up, key)
-            self.wait()
+        for key in keys:
+            # self._processAsync(operations.Get, write_entry, blow_up, key)
+            self.conn.getAsync(write_entry, blow_up, key)
+        self.conn.wait()
+        target.conn.wait()
+
+    def delete_keys(self, keys, depth=16):
+        pending = deque()
+        for key in keys:
+            while len(pending) >= depth:
+                found = pending.popleft().wait()
+                if not found:
+                    break
+            pending.append(self.delete(key, force=True))
+
+        for resp in pending:
+            resp.wait()
+
+    def push_keys(self, target, keys, batch=16):
+        host, port = target.split(':')
+        port = int(port)
+        key_batch = []
+        results = []
+        for key in keys:
+            key_batch.append(key)
+            if len(key_batch) < batch:
+                continue
+            # send a batch
+            results.extend(self.conn.push(key_batch, host, port))
+
+            key_batch = []
+        if key_batch:
+            results.extend(self.conn.push(key_batch, host, port))
+        return results

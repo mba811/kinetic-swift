@@ -89,14 +89,14 @@ class TestKineticReplicator(utils.KineticSwiftTestCase):
         return metadata, body
 
     def test_setup(self):
+        self.assertEqual(self.daemon.replication_mode, self.REPLICATION_MODE)
         self.assertEqual(self.daemon.swift_dir, self.test_dir)
         expected_path = os.path.join(self.test_dir, 'object.ring.gz')
         object_ring = self.daemon.get_object_ring(0)
         self.assertEqual(object_ring.serialized_path, expected_path)
         self.assertEquals(len(object_ring.devs), len(self.ports))
         for client in self.client_map.values():
-            with client:
-                resp = client.getKeyRange('chunks.', 'objects/')
+            resp = client.getKeyRange('chunks.', 'objects/')
             self.assertEquals(resp.wait(), [])
 
     def test_replicate_all(self):
@@ -113,10 +113,8 @@ class TestKineticReplicator(utils.KineticSwiftTestCase):
         self.daemon._replicate(source_device)
         result = self.get_object(target_device, 'obj1')
         self.assertEquals(expected, result)
-        with source_client as client:
-            source_resp = client.getKeyRange('chunks.', 'objects/')
-        with target_client as client:
-            target_resp = client.getKeyRange('chunks.', 'objects/')
+        source_resp = source_client.getKeyRange('chunks.', 'objects/')
+        target_resp = target_client.getKeyRange('chunks.', 'objects/')
         source_keys = source_resp.wait()
         target_keys = target_resp.wait()
         self.assertEquals(source_keys, target_keys)
@@ -166,11 +164,9 @@ class TestKineticReplicator(utils.KineticSwiftTestCase):
         self.assertNotEqual(source_nounce, target_nounce)
         self.assertEqual(source_meta, target_meta)
         # peek at keys
-        with source_client as client:
-            source_resp = client.getKeyRange('chunks.', 'objects/')
+        source_resp = source_client.getKeyRange('chunks.', 'objects/')
         source_keys = source_resp.wait()
-        with target_client as client:
-            target_resp = client.getKeyRange('chunks.', 'objects/')
+        target_resp = target_client.getKeyRange('chunks.', 'objects/')
         target_keys = target_resp.wait()
         self.assertEqual(len(source_keys), len(target_keys))
         for source_key, target_key in zip(source_keys, target_keys):
@@ -184,11 +180,9 @@ class TestKineticReplicator(utils.KineticSwiftTestCase):
         original_key_count = len(source_keys)
         # perform replication, should more or less no-op
         self.daemon._replicate(source_device)
-        with source_client as client:
-            source_resp = client.getKeyRange('chunks.', 'objects/')
+        source_resp = source_client.getKeyRange('chunks.', 'objects/')
         source_keys = source_resp.wait()
-        with target_client as client:
-            target_resp = client.getKeyRange('chunks.', 'objects/')
+        target_resp = target_client.getKeyRange('chunks.', 'objects/')
         target_keys = target_resp.wait()
         self.assertEqual(len(source_keys), len(target_keys))
         for source_key, target_key in zip(source_keys, target_keys):
@@ -225,9 +219,6 @@ class TestKineticReplicator(utils.KineticSwiftTestCase):
 class TestKineticCopyReplicator(TestKineticReplicator):
 
     REPLICATION_MODE = 'copy'
-
-    def test_setup(self):
-        self.assertEqual(self.daemon.replication_mode, 'copy')
 
 
 if __name__ == "__main__":

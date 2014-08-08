@@ -292,7 +292,11 @@ class DiskFile(diskfile.DiskFile):
 class ObjectController(server.ObjectController):
 
     def setup(self, conf):
+        super(ObjectController, self).setup(conf)
         self._diskfile_mgr = DiskFileManager(conf, self.logger)
+        kinetic_logger = logging.getLogger('kinetic')
+        for handler in self.logger.logger.handlers:
+            kinetic_logger.addHandler(handler)
 
 
 def app_factory(global_conf, **local_conf):

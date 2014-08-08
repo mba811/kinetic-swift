@@ -4,7 +4,7 @@ import logging
 from contextlib import contextmanager
 from collections import deque
 from uuid import uuid4
-from eventlet import sleep, Timeout
+from eventlet import sleep, Timeout, spawn_n
 
 import msgpack
 from swift.obj import diskfile, server
@@ -141,7 +141,6 @@ class DiskFile(diskfile.DiskFile):
         self.hashpath = os.path.basename(self._datadir.rstrip('/'))
         self._buffer = ''
         # this is the first "disk_chunk_size" + metadata
-        self._headbuffer = None
         self._nounce = None
         self.upload_size = 0
         self.last_sync = 0
@@ -165,9 +164,7 @@ class DiskFile(diskfile.DiskFile):
         self.data_file = '.ts.' not in entry.key
         blob = entry.value
         self._nounce = get_nounce(entry.key)
-        payload = msgpack.unpackb(blob)
-        self._metadata = payload['metadata']
-        self._headbuffer = payload['buffer']
+        self._metadata = msgpack.unpackb(blob)
 
     def open(self, **kwargs):
         self._read()
@@ -191,7 +188,6 @@ class DiskFile(diskfile.DiskFile):
     def __iter__(self):
         if not self._metadata:
             return
-        yield self._headbuffer
         keys = [chunk_key(self.hashpath, self._nounce, i + 1) for i in
                 range(int(self._metadata['X-Kinetic-Chunk-Count']))]
 
@@ -207,8 +203,8 @@ class DiskFile(diskfile.DiskFile):
 
     @contextmanager
     def create(self, size=None):
-        self._headbuffer = None
         self._nounce = str(uuid4())
+        self._chunk_id = 0
         try:
             self._pending_write = deque()
             yield self
@@ -237,11 +233,7 @@ class DiskFile(diskfile.DiskFile):
         self._pending_write.append(pending_resp)
 
     def _sync_buffer(self):
-        if not self._headbuffer:
-            # save the headbuffer
-            self._headbuffer = self._buffer[:self.disk_chunk_size]
-            self._chunk_id = 0
-        elif self._buffer:
+        if self._buffer:
             # write out the chunk buffer!
             self._chunk_id += 1
             key = chunk_key(self.hashpath, self._nounce, self._chunk_id)
@@ -264,14 +256,13 @@ class DiskFile(diskfile.DiskFile):
         metadata['X-Kinetic-Chunk-Nounce'] = self._nounce
         metadata['name'] = self._name
         self._metadata = metadata
-        payload = {'metadata': metadata, 'buffer': self._headbuffer}
-        blob = msgpack.packb(payload)
+        blob = msgpack.packb(self._metadata)
         timestamp = diskfile.Timestamp(metadata['X-Timestamp'])
         key = self.object_key(timestamp.internal, self._extension,
                               self._nounce)
         self._submit_write(key, blob, final=True)
         self._wait_write()
-        self._unlink_old(timestamp)
+        spawn_n(self._unlink_old, timestamp)
 
     def _unlink_old(self, req_timestamp):
         start_key = self.object_key()[:-1]

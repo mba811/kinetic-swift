@@ -139,9 +139,10 @@ class DiskFile(diskfile.DiskFile):
         self._took_reader = False
         super(DiskFile, self).__init__(mgr, device_path, *args, **kwargs)
         self.hashpath = os.path.basename(self._datadir.rstrip('/'))
-        self._buffer = ''
+        self._buffer = bytearray()
         # this is the first "disk_chunk_size" + metadata
         self._nounce = None
+        self.chunk_id = -1
         self.upload_size = 0
         self.last_sync = 0
         # configurables
@@ -151,6 +152,7 @@ class DiskFile(diskfile.DiskFile):
         self.synchronization = self._mgr.synchronization
         self.conn = None
         self.conn = mgr.get_connection(host, port)
+        self.logger = mgr.logger
 
     def object_key(self, *args, **kwargs):
         return object_key(self.policy_index, self.hashpath, *args, **kwargs)
@@ -212,7 +214,7 @@ class DiskFile(diskfile.DiskFile):
             self.close()
 
     def write(self, chunk):
-        self._buffer += chunk
+        self._buffer.extend(chunk)
         self.upload_size += len(chunk)
 
         diff = self.upload_size - self.last_sync

@@ -4,7 +4,7 @@ from eventlet import Timeout, spawn_n
 
 from kinetic.asyncclient import AsyncClient
 from kinetic.greenclient import Response as BaseResponse
-
+import datetime
 
 class Response(BaseResponse):
 
@@ -39,6 +39,9 @@ class KineticSwiftClient(object):
         self.conn = AsyncClient(host, port, **kwargs)
         self.conn.connect()
 
+    def log_info(self, message):
+	self.logger.info('%s kinetic %s (%s): %s' % (datetime.datetime.now(), self.conn.hostname, self.conn.connection_id, message))
+	
     def close(self):
         if not self.conn:
             return
@@ -67,36 +70,45 @@ class KineticSwiftClient(object):
         return self.conn.faulted
 
     def getPrevious(self, *args, **kwargs):
-        promise = Response(self)
+        self.log_info('getPrevious')
+	promise = Response(self)
         self.conn.getPreviousAsync(promise.setResponse, promise.setError,
-                                   *args, **kwargs)
-        return promise
+                                    *args, **kwargs)
+        # promise.setResponse(None)
+	return promise
 
     def put(self, key, data, *args, **kwargs):
+        self.log_info('put')
         promise = Response(self)
         self.conn.putAsync(promise.setResponse, promise.setError, key, data,
                            *args, **kwargs)
+        # promise.setResponse(None)
         return promise
 
     def getKeyRange(self, *args, **kwargs):
+        self.log_info('getKeyRange')
         promise = Response(self)
         self.conn.getKeyRangeAsync(promise.setResponse, promise.setError,
                                    *args, **kwargs)
+        # promise.setResponse([])
         return promise
 
     def delete(self, key, *args, **kwargs):
+        self.log_info('delete')
         promise = Response(self)
         self.conn.deleteAsync(promise.setResponse, promise.setError, key,
                               *args, **kwargs)
         return promise
 
     def get(self, key, *args, **kwargs):
+        self.log_info('get')
         promise = Response(self)
         self.conn.getAsync(promise.setResponse, promise.setError, key,
                            *args, **kwargs)
         return promise
 
     def copy_keys(self, target, keys, depth=16):
+        self.log_info('copy_keys')
         host, port = target.split(':')
         target = self.__class__(self.logger, host, int(port))
 
@@ -113,6 +125,7 @@ class KineticSwiftClient(object):
         target.conn.wait()
 
     def delete_keys(self, keys, depth=16):
+        self.log_info('delete_keys')
         pending = deque()
         for key in keys:
             while len(pending) >= depth:
@@ -125,6 +138,7 @@ class KineticSwiftClient(object):
             resp.wait()
 
     def push_keys(self, target, keys, batch=16):
+        self.log_info('push_keys')
         host, port = target.split(':')
         port = int(port)
         key_batch = []

@@ -1,5 +1,5 @@
 import os
-os.environ['PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION'] = 'cpp'
+#os.environ['PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION'] = 'cpp'
 import logging
 from contextlib import contextmanager
 from collections import deque
@@ -20,7 +20,7 @@ SYNC_WRITEBACK = 2
 SYNC_FLUSH = 3
 
 SYNC_OPTION_MAP = {
-    'default': SYNC_INVALID,
+    'default': SYNC_WRITEBACK,
     'writethrough': SYNC_WRITETHROUGH,
     'writeback': SYNC_WRITEBACK,
     'flush': SYNC_FLUSH,
@@ -139,10 +139,11 @@ class DiskFile(diskfile.DiskFile):
         self._took_reader = False
         super(DiskFile, self).__init__(mgr, device_path, *args, **kwargs)
         self.hashpath = os.path.basename(self._datadir.rstrip('/'))
-        self._buffer = ''
+        self._buffer = bytearray()
         # this is the first "disk_chunk_size" + metadata
-        self._headbuffer = None
+        self._headbuffer = '' # we dont need to get rid of this header inside the metadata object
         self._nounce = None
+	self.chunk_id = -1
         self.upload_size = 0
         self.last_sync = 0
         # configurables
@@ -152,11 +153,13 @@ class DiskFile(diskfile.DiskFile):
         self.synchronization = self._mgr.synchronization
         self.conn = None
         self.conn = mgr.get_connection(host, port)
+	self.logger = mgr.logger
 
     def object_key(self, *args, **kwargs):
         return object_key(self.policy_index, self.hashpath, *args, **kwargs)
 
     def _read(self):
+	# self.logger.info('_read')
         key = self.object_key()
         entry = self.conn.getPrevious(key).wait()
         if not entry or not entry.key.startswith(key[:-1]):
@@ -170,6 +173,7 @@ class DiskFile(diskfile.DiskFile):
         self._headbuffer = payload['buffer']
 
     def open(self, **kwargs):
+	# self.logger.info('open')
         self._read()
         if not self._metadata:
             raise diskfile.DiskFileNotExist()
@@ -207,6 +211,7 @@ class DiskFile(diskfile.DiskFile):
 
     @contextmanager
     def create(self, size=None):
+	# self.logger.info('create')
         self._headbuffer = None
         self._nounce = str(uuid4())
         try:
@@ -216,7 +221,8 @@ class DiskFile(diskfile.DiskFile):
             self.close()
 
     def write(self, chunk):
-        self._buffer += chunk
+	# self.logger.info('write(%s bytes)' % (len(chunk)))
+        self._buffer.extend(chunk)
         self.upload_size += len(chunk)
 
         diff = self.upload_size - self.last_sync
@@ -226,6 +232,7 @@ class DiskFile(diskfile.DiskFile):
         return self.upload_size
 
     def _submit_write(self, key, blob, final=True):
+	# self.logger.info('_submit_write(key=%s, size=%s)' % (key, len(blob)))
         if len(self._pending_write) >= self.write_depth:
             self._pending_write.popleft().wait()
         if self.synchronization == SYNC_FLUSH and not final:
@@ -233,13 +240,13 @@ class DiskFile(diskfile.DiskFile):
         else:
             synchronization = self.synchronization
         pending_resp = self.conn.put(key, blob, force=True,
-                                     synchronization=synchronization)
+                                          synchronization=SYNC_WRITEBACK)
         self._pending_write.append(pending_resp)
 
     def _sync_buffer(self):
         if not self._headbuffer:
             # save the headbuffer
-            self._headbuffer = self._buffer[:self.disk_chunk_size]
+            # self._headbuffer = str(self._buffer[:self.disk_chunk_size])
             self._chunk_id = 0
         elif self._buffer:
             # write out the chunk buffer!
@@ -254,6 +261,7 @@ class DiskFile(diskfile.DiskFile):
             resp.wait()
 
     def put(self, metadata):
+	self.logger.info('put')
         if self._extension == '.ts':
             metadata['deleted'] = True
         self._sync_buffer()
@@ -264,14 +272,13 @@ class DiskFile(diskfile.DiskFile):
         metadata['X-Kinetic-Chunk-Nounce'] = self._nounce
         metadata['name'] = self._name
         self._metadata = metadata
-        payload = {'metadata': metadata, 'buffer': self._headbuffer}
-        blob = msgpack.packb(payload)
+        blob = msgpack.packb(metadata) # the payload is the metadata, forget about the header buffer thing
         timestamp = diskfile.Timestamp(metadata['X-Timestamp'])
         key = self.object_key(timestamp.internal, self._extension,
-                              self._nounce)
+                               self._nounce)
         self._submit_write(key, blob, final=True)
         self._wait_write()
-        self._unlink_old(timestamp)
+        # self._unlink_old(timestamp) # we need a better way to do this
 
     def _unlink_old(self, req_timestamp):
         start_key = self.object_key()[:-1]

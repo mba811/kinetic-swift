@@ -245,7 +245,14 @@ class DiskFile(diskfile.DiskFile):
         for resp in self._pending_write:
             resp.wait()
 
-    def put(self, metadata):
+    def delete(self, timestamp, unlink_wait=False):
+        timestamp = diskfile.Timestamp(timestamp).internal
+
+        with self.create() as deleter:
+            deleter._extension = '.ts'
+            deleter.put({'X-Timestamp': timestamp}, unlink_wait=unlink_wait)
+
+    def put(self, metadata, unlink_wait=False):
         if self._extension == '.ts':
             metadata['deleted'] = True
         self._sync_buffer()
@@ -262,7 +269,10 @@ class DiskFile(diskfile.DiskFile):
                               self._nounce)
         self._submit_write(key, blob, final=True)
         self._wait_write()
-        spawn_n(self._unlink_old, timestamp)
+        if unlink_wait:
+            self._unlink_old(timestamp)
+        else:
+            spawn_n(self._unlink_old, timestamp)
 
     def _unlink_old(self, req_timestamp):
         start_key = self.object_key()[:-1]

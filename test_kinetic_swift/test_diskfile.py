@@ -82,7 +82,7 @@ class TestDiskFile(KineticSwiftTestCase):
         self.assertEquals(body, 'awesome')
         expected = {
             'X-Timestamp': req_timestamp,
-            'X-Kinetic-Chunk-Count': 0,
+            'X-Kinetic-Chunk-Count': 1,
         }
         for k, v in expected.items():
             self.assertEqual(metadata[k], v,
@@ -140,7 +140,7 @@ class TestDiskFile(KineticSwiftTestCase):
             self.assertEquals(body, expected_body)
             expected = {
                 'X-Timestamp': req_timestamp,
-                'X-Kinetic-Chunk-Count': 9,
+                'X-Kinetic-Chunk-Count': 10,
             }
             for k, v in expected.items():
                 self.assertEqual(metadata[k], v,
@@ -178,7 +178,7 @@ class TestDiskFile(KineticSwiftTestCase):
         self.assertEquals(body, '\x00' * 30)
         expected = {
             'X-Timestamp': req_timestamp,
-            'X-Kinetic-Chunk-Count': 2,
+            'X-Kinetic-Chunk-Count': 3,
         }
         for k, v in expected.items():
             self.assertEqual(metadata[k], v)
@@ -188,9 +188,9 @@ class TestDiskFile(KineticSwiftTestCase):
         write_chunk_size = 6
         write_chunk_count = 7
         object_size = write_chunk_size * write_chunk_count
-        # int(math.ceil(1.0 * object_size / disk_chunk_size) - 1)
+        # int(math.ceil(1.0 * object_size / disk_chunk_size))
         q, r = divmod(object_size, disk_chunk_size)
-        disk_chunk_count = q if r else q - 1
+        disk_chunk_count = q if not r else q + 1
 
         df = self.mgr.get_diskfile(self.device, '0', 'a', 'c',
                                    self.buildKey('o'),
@@ -228,7 +228,7 @@ class TestDiskFile(KineticSwiftTestCase):
             writer.put({'X-Timestamp': req_timestamp})
 
         req_timestamp += 1
-        df.delete(req_timestamp)
+        df.delete(req_timestamp, unlink_wait=True)
 
         try:
             df.open()
@@ -258,7 +258,7 @@ class TestDiskFile(KineticSwiftTestCase):
     def test_overwrite(self):
         num_chunks = 3
         disk_chunk_size = 10
-        disk_chunk_count = num_chunks - 1
+        disk_chunk_count = num_chunks
 
         df = self.mgr.get_diskfile(self.device, '0', 'a', 'c',
                                    self.buildKey('o'), disk_chunk_size=10,
@@ -276,7 +276,7 @@ class TestDiskFile(KineticSwiftTestCase):
             chunk = '\x01' * disk_chunk_size
             for i in range(num_chunks):
                 writer.write(chunk)
-            writer.put({'X-Timestamp': req_timestamp})
+            writer.put({'X-Timestamp': req_timestamp}, unlink_wait=True)
 
         with df.open() as reader:
             metadata = reader.get_metadata()

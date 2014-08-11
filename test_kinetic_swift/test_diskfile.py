@@ -107,7 +107,7 @@ class TestDiskFile(KineticSwiftTestCase):
                 # flush option does writeback unless final
                 if sync_option == 'flush':
                     self.assertEqual(options['synchronization'],
-                                     server.SYNC_WRITEBACK)
+                                     server.SYNC_OPTION_MAP['writeback'])
                 else:
                     self.assertEqual(options['synchronization'],
                                      df.synchronization)

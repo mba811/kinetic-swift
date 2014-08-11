@@ -11,19 +11,17 @@ from swift.obj import diskfile, server
 
 from kinetic_swift.client import KineticSwiftClient
 
+from kinetic.common import Synchronization
+
 
 DEFAULT_DEPTH = 2
 
-SYNC_INVALID = -1
-SYNC_WRITETHROUGH = 1
-SYNC_WRITEBACK = 2
-SYNC_FLUSH = 3
 
 SYNC_OPTION_MAP = {
-    'default': SYNC_INVALID,
-    'writethrough': SYNC_WRITETHROUGH,
-    'writeback': SYNC_WRITEBACK,
-    'flush': SYNC_FLUSH,
+    'default': Synchronization.INVALID_SYNCHRONIZATION,
+    'writethrough': Synchronization.WRITETHROUGH,
+    'writeback': Synchronization.WRITEBACK,
+    'flush': Synchronization.FLUSH,
 }
 
 
@@ -61,7 +59,7 @@ class DiskFileManager(diskfile.DiskFileManager):
         self.write_depth = int(conf.get('write_depth', DEFAULT_DEPTH))
         self.read_depth = int(conf.get('read_depth', DEFAULT_DEPTH))
         self.delete_depth = int(conf.get('delete_depth', DEFAULT_DEPTH))
-        raw_sync_option = conf.get('synchronization', 'default').lower()
+        raw_sync_option = conf.get('synchronization', 'writeback').lower()
         try:
             self.synchronization = SYNC_OPTION_MAP[raw_sync_option]
         except KeyError:
@@ -226,8 +224,8 @@ class DiskFile(diskfile.DiskFile):
     def _submit_write(self, key, blob, final=True):
         if len(self._pending_write) >= self.write_depth:
             self._pending_write.popleft().wait()
-        if self.synchronization == SYNC_FLUSH and not final:
-            synchronization = SYNC_WRITEBACK
+        if self.synchronization == Synchronization.FLUSH and not final:
+            synchronization = Synchronization.WRITEBACK
         else:
             synchronization = self.synchronization
         pending_resp = self.conn.put(key, blob, force=True,

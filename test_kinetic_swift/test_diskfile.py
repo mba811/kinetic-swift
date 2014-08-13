@@ -102,6 +102,7 @@ class TestDiskFile(KineticSwiftTestCase):
             def capture_args(*args, **kwargs):
                 options.update(kwargs)
             df.conn.put = capture_args
+            df.conn.put_metadata = capture_args
             with df.create():
                 key = self.buildKey('submit_%s' % sync_option)
                 df._submit_write(key, 'blob', final=False)

@@ -4,7 +4,7 @@ import logging
 from contextlib import contextmanager
 from collections import deque
 from uuid import uuid4
-from eventlet import sleep, Timeout, spawn_n
+from eventlet import spawn_n
 
 import msgpack
 from swift.obj import diskfile, server
@@ -77,26 +77,6 @@ class DiskFileManager(diskfile.DiskFileManager):
                             timestamp, policy_idx):
         pass
 
-    def _new_connection(self, host, port, **kwargs):
-        kwargs.setdefault('connect_timeout', self.connect_timeout)
-        kwargs.setdefault('response_timeout', self.response_timeout)
-        for i in range(1, self.connect_retry + 1):
-            try:
-                return KineticSwiftClient(self.logger, host, int(port),
-                                          **kwargs)
-            except Timeout:
-                self.logger.warning('Drive %s:%s connect timeout #%d (%ds)' % (
-                    host, port, i, self.connect_timeout))
-            except Exception:
-                self.logger.exception('Drive %s:%s connection error #%d' % (
-                    host, port, i))
-            if i < self.connect_retry:
-                sleep(1)
-        msg = 'Unable to connect to drive %s:%s after %s attempts' % (
-            host, port, i)
-        self.logger.error(msg)
-        raise diskfile.DiskFileDeviceUnavailable()
-
     def get_connection(self, host, port, **kwargs):
         key = (host, port)
         conn = None
@@ -104,12 +84,11 @@ class DiskFileManager(diskfile.DiskFileManager):
             conn = self.conn_pool[key]
         except KeyError:
             pass
-        if conn and conn.faulted:
-            conn.close()
-            conn = None
         if not conn:
-            conn = self.conn_pool[key] = self._new_connection(
-                host, port, **kwargs)
+            conn = KineticSwiftClient(self.logger, host, int(port),
+                                      connect_timeout=self.connect_timeout,
+                                      connect_retry=self.connect_retry,
+                                      response_timeout=self.response_timeout)
         return conn
 
 
@@ -230,8 +209,12 @@ class DiskFile(diskfile.DiskFile):
             synchronization = Synchronization.WRITEBACK
         else:
             synchronization = self.synchronization
-        pending_resp = self.conn.put(key, blob, force=True,
-                                     synchronization=synchronization)
+        if final:
+            put = self.conn.put_metadata
+        else:
+            put = self.conn.put
+        pending_resp = put(key, blob, force=True,
+                           synchronization=synchronization)
         self._pending_write.append(pending_resp)
 
     def _sync_buffer(self):

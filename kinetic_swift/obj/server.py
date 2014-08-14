@@ -66,11 +66,12 @@ class DiskFileManager(diskfile.DiskFileManager):
             raise ValueError('Invalid synchronization option, choices are %r' %
                              SYNC_OPTION_MAP.keys())
         self.conn_pool = {}
+        self.unlink_wait = False
 
     def get_diskfile(self, device, *args, **kwargs):
         host, port = device.split(':')
-        return DiskFile(self, host, port, self.threadpools[device], *args,
-                        **kwargs)
+        return DiskFile(self, host, port, self.threadpools[device],
+                        unlink_wait=self.unlink_wait, *args, **kwargs)
 
     def pickle_async_update(self, device, account, container, obj, data,
                             timestamp, policy_idx):
@@ -127,6 +128,7 @@ class DiskFileReader(diskfile.DiskFileReader):
 class DiskFile(diskfile.DiskFile):
 
     def __init__(self, mgr, host, port, *args, **kwargs):
+        self.unlink_wait = kwargs.pop('unlink_wait', False)
         device_path = ''
         self.disk_chunk_size = kwargs.pop('disk_chunk_size',
                                           mgr.disk_chunk_size)
@@ -245,14 +247,14 @@ class DiskFile(diskfile.DiskFile):
         for resp in self._pending_write:
             resp.wait()
 
-    def delete(self, timestamp, unlink_wait=False):
+    def delete(self, timestamp):
         timestamp = diskfile.Timestamp(timestamp).internal
 
         with self.create() as deleter:
             deleter._extension = '.ts'
-            deleter.put({'X-Timestamp': timestamp}, unlink_wait=unlink_wait)
+            deleter.put({'X-Timestamp': timestamp})
 
-    def put(self, metadata, unlink_wait=False):
+    def put(self, metadata):
         if self._extension == '.ts':
             metadata['deleted'] = True
         self._sync_buffer()
@@ -269,7 +271,7 @@ class DiskFile(diskfile.DiskFile):
                               self._nounce)
         self._submit_write(key, blob, final=True)
         self._wait_write()
-        if unlink_wait:
+        if self.unlink_wait:
             self._unlink_old(timestamp)
         else:
             spawn_n(self._unlink_old, timestamp)

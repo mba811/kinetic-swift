@@ -19,6 +19,7 @@ class TestDiskFile(KineticSwiftTestCase):
         self.client = self.client_map[self.port]
         self.logger = debug_logger('test-kinetic')
         self.mgr = server.DiskFileManager({}, self.logger)
+        self.mgr.unlink_wait = True
         self.policy = random.choice(list(server.diskfile.POLICIES))
 
     def test_manager_config(self):
@@ -125,6 +126,7 @@ class TestDiskFile(KineticSwiftTestCase):
         for sync_option in ('flush', 'writeback', 'writethrough', 'default'):
             conf['synchronization'] = sync_option
             mgr = server.DiskFileManager(conf, self.logger)
+            mgr.unlink_wait = True
             df = mgr.get_diskfile(self.device, '0', 'a', 'c',
                                   self.buildKey('o'),
                                   policy_idx=int(self.policy))
@@ -228,7 +230,7 @@ class TestDiskFile(KineticSwiftTestCase):
             writer.put({'X-Timestamp': req_timestamp})
 
         req_timestamp += 1
-        df.delete(req_timestamp, unlink_wait=True)
+        df.delete(req_timestamp)
 
         try:
             df.open()
@@ -276,7 +278,7 @@ class TestDiskFile(KineticSwiftTestCase):
             chunk = '\x01' * disk_chunk_size
             for i in range(num_chunks):
                 writer.write(chunk)
-            writer.put({'X-Timestamp': req_timestamp}, unlink_wait=True)
+            writer.put({'X-Timestamp': req_timestamp})
 
         with df.open() as reader:
             metadata = reader.get_metadata()

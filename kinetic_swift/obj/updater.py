@@ -124,8 +124,8 @@ class KineticUpdater(ObjectUpdater):
                               {'obj': obj, 'path': update_entry})
             if new_successes:
                 update['successes'] = successes
-                return self._save_update(device, update_entry, update)
-        return True
+                self._save_update(device, update_entry, update)
+        return success
 
 
 def main():

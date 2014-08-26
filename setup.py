@@ -18,6 +18,7 @@ setup(
         ],
         'console_scripts': [
             'kinetic-swift-replicator = kinetic_swift.obj.replicator:main',
+            'kinetic-swift-updater = kinetic_swift.obj.updater:main',
         ],
     },
 )

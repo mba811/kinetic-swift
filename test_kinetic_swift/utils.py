@@ -12,7 +12,7 @@ import eventlet
 
 from kinetic_swift.client import KineticSwiftClient
 
-from test.unit import debug_logger, patch_policies
+from test.unit import debug_logger, patch_policies, mocked_http_conn
 
 
 JAR_PATH = os.environ['KINETIC_JAR']

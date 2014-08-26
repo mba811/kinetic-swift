@@ -115,8 +115,21 @@ execute "update-path" do
   action :run
 end
 
+[
+  "/etc/kinetic",
+  "/var/cache/swift/kinetic",
+  "/home/vagrant/.python-eggs",
+].each do |d|
+  directory d do
+    owner "vagrant"
+    group "vagrant"
+    action :create
+  end
+end
+
 {
   "PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION" => "cpp",
+  "PYTHON_EGG_CACHE" => "/home/vagrant/.python-eggs",
   "KINETIC_JAR" => KINETIC_JAR,
 }.each do |var, value|
   execute "kinetic-env-#{var}" do
@@ -128,18 +141,6 @@ end
 execute "shutdown-swift-object-server" do
   command "swift-init object-server stop || true"
   action :run
-end
-
-[
-  "/etc/kinetic",
-  "/var/cache/swift/kinetic",
-  "/home/vagrant/.python-eggs",
-].each do |d|
-  directory d do
-    owner "vagrant"
-    group "vagrant"
-    action :create
-  end
 end
 
 template "/etc/kinetic/kinetic-simulator.screenrc" do

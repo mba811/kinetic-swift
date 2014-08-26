@@ -66,12 +66,16 @@ class DiskFileManager(diskfile.DiskFileManager):
             raise ValueError('Invalid synchronization option, choices are %r' %
                              SYNC_OPTION_MAP.keys())
         self.conn_pool = {}
-        self.unlink_wait = False
+        self.unlink_wait = \
+            server.config_true_value(conf.get('unlink_wait', 'false'))
 
-    def get_diskfile(self, device, *args, **kwargs):
+    def get_diskfile(self, device, partition, account, container, obj,
+                     policy_idx=0, **kwargs):
         host, port = device.split(':')
         return DiskFile(self, host, port, self.threadpools[device],
-                        unlink_wait=self.unlink_wait, *args, **kwargs)
+                        partition, account, container, obj,
+                        policy_idx=policy_idx, unlink_wait=self.unlink_wait,
+                        **kwargs)
 
     def pickle_async_update(self, device, account, container, obj, data,
                             timestamp, policy_idx):

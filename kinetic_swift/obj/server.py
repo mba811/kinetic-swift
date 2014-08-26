@@ -45,6 +45,11 @@ def object_key(policy_index, hashpath, timestamp='',
         return '%s.%s/' % (storage_policy, hashpath)
 
 
+def async_key(policy_index, hashpath, timestamp):
+    async_policy = diskfile.get_async_dir(policy_index)
+    return '%s.%s.%s' % (async_policy, hashpath, timestamp)
+
+
 def get_nounce(key):
     return key.rsplit('.', 1)[-1]
 
@@ -79,7 +84,13 @@ class DiskFileManager(diskfile.DiskFileManager):
 
     def pickle_async_update(self, device, account, container, obj, data,
                             timestamp, policy_idx):
-        pass
+        host, port = device.split(':')
+        hashpath = diskfile.hash_path(account, container, obj)
+        key = async_key(policy_idx, hashpath, timestamp)
+        blob = msgpack.packb(data)
+        resp = self.get_connection(host, port).put(key, blob)
+        resp.wait()
+        self.logger.increment('async_pendings')
 
     def _new_connection(self, host, port, **kwargs):
         kwargs.setdefault('connect_timeout', self.connect_timeout)

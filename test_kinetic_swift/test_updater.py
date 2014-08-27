@@ -87,7 +87,7 @@ class TestKineticObjectUpdater(KineticSwiftTestCase):
         self.assertEquals(self.container_ring.replicas,
                           len(container_updates))
         expected_headers = {
-            'User-Agent': 'obj-updater %d' % os.getpid(),
+            'user-agent': 'obj-updater %d' % os.getpid(),
             'X-Size': str(len(body)),
             'X-Content-Type': 'application/octet-stream',
             'X-Etag': hashlib.md5(body).hexdigest(),
@@ -164,7 +164,7 @@ class TestKineticObjectUpdater(KineticSwiftTestCase):
         self.assertEquals(self.container_ring.replicas,
                           len(container_updates))
         expected_headers = {
-            'User-Agent': 'obj-updater %d' % os.getpid(),
+            'user-agent': 'obj-updater %d' % os.getpid(),
             'X-Size': str(len(body)),
             'X-Content-Type': 'application/octet-stream',
             'X-Etag': hashlib.md5(body).hexdigest(),

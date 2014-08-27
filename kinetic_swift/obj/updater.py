@@ -11,6 +11,7 @@ import msgpack
 
 from swift.common.daemon import run_daemon
 from swift.common.storage_policy import POLICIES
+from swift.common.swob import HeaderKeyDict
 from swift.common.utils import parse_options, list_from_csv
 from swift.obj.updater import ObjectUpdater, dump_recon_cache, is_success, \
     HTTP_NOT_FOUND
@@ -93,6 +94,8 @@ class KineticUpdater(ObjectUpdater):
         update = self._load_update(device, update_entry)
 
         # process update
+        headers = HeaderKeyDict(update['headers'])
+        del headers['user-agent']
         successes = update.get('successes', [])
         part, nodes = self.get_container_ring().get_nodes(
             update['account'], update['container'])
@@ -102,7 +105,6 @@ class KineticUpdater(ObjectUpdater):
         new_successes = False
         for node in nodes:
             if node['id'] not in successes:
-                headers = update['headers'].copy()
                 status = self.object_update(node, part, update['op'], obj,
                                             headers)
                 if not is_success(status) and status != HTTP_NOT_FOUND:

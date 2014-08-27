@@ -108,6 +108,28 @@ class KineticSwiftClient(object):
                            *args, **kwargs)
         return promise
 
+    def raise_err(self, *args, **kwargs):
+        raise Exception(
+            'error handling request to Drive %s:%s : %r %r' % (
+                self.host, self.port, args, kwargs))
+
+    def rename(self, key, new_key):
+        promise = Response(self)
+
+        def delete_key(*args, **kwargs):
+            self.conn.deleteAsync(promise.setResponse, promise.setError, key,
+                                  *args, **kwargs)
+
+        def write_entry(entry):
+            if not entry:
+                delete_key()
+            else:
+                self.conn.putAsync(delete_key, self.raise_err,
+                                   new_key, entry.value)
+
+        self.conn.getAsync(write_entry, self.raise_err, key)
+        return promise
+
     def copy_keys(self, target, keys, depth=16):
         # self.log_info('copy_keys')
         host, port = target.split(':')
@@ -116,11 +138,8 @@ class KineticSwiftClient(object):
         def write_entry(entry):
             target.put(entry.key, entry.value, force=True)
 
-        def blow_up(*args, **kwargs):
-            raise Exception('do something %r %r' % (args, kwargs))
-
         for key in keys:
-            self.conn.getAsync(write_entry, blow_up, key)
+            self.conn.getAsync(write_entry, self.raise_err, key)
         self.conn.wait()
         target.conn.wait()
 

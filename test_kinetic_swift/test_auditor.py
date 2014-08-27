@@ -2,6 +2,7 @@ import hashlib
 import time
 import random
 import mock
+import msgpack
 
 from swift.common.storage_policy import POLICIES
 
@@ -40,7 +41,6 @@ class TestKineticObjectAuditor(KineticSwiftTestCase):
         with mock.patch('time.sleep', lambda x: None):
             self.auditor.run_once(devices=self.device)
 
-        self.auditor.logger.logger.lines_dict
         self.assertEqual(self.auditor.stats, {
             'found_objects': 1,
             'success': 1,
@@ -133,3 +133,63 @@ class TestKineticObjectAuditor(KineticSwiftTestCase):
             self.fail('Did not raise deleted!')
         finally:
             df.close()
+
+    def test_quarantine(self):
+        num_chunks = 8
+        chunk_size = 100
+        df = self.auditor.mgr.get_diskfile(self.device, '0', 'a', 'c',
+                                           self.buildKey('o'),
+                                           policy_idx=int(self.policy),
+                                           disk_chunk_size=chunk_size)
+        chunk = 'a' * chunk_size
+        hash_ = hashlib.md5()
+        put_timestamp = server.diskfile.Timestamp(time.time())
+        with df.create() as writer:
+            for i in range(num_chunks):
+                writer.write(chunk)
+                hash_.update(chunk)
+            writer.put({'X-Timestamp': put_timestamp.internal,
+                        'Etag': hash_.hexdigest(),
+                        'Content-Length': str(num_chunks * chunk_size)})
+
+        with mock.patch('time.sleep', lambda x: None):
+            self.auditor.run_once(devices=self.device)
+
+        self.assertEqual(self.auditor.stats, {
+            'found_objects': 1,
+            'success': 1,
+        })
+
+        # check quarantine keys
+        with df.open():
+            nounce = df._nounce
+            df.quarantine()
+
+        start_key = 'quarantine'
+        end_key = start_key + '/'
+        keys = [k for k in self.client.getKeyRange(start_key, end_key).wait()
+                if nounce in k]
+        self.assertEqual(len(keys), num_chunks + 1)
+
+        chunk_keys = [k for k in keys if 'chunk' in k]
+        etag = hashlib.md5()
+        size = 0
+        for k in sorted(chunk_keys):
+            chunk = self.client.get(k).wait().value
+            size += len(chunk)
+            etag.update(chunk)
+
+        self.assertEqual(etag.hexdigest(), hash_.hexdigest())
+        self.assertEqual(size, num_chunks * chunk_size)
+
+        head_key = [k for k in keys if 'object' in k][0]
+        metadata = msgpack.unpackb(self.client.get(head_key).wait().value)
+        expected = {
+            'Content-Length': str(num_chunks * chunk_size),
+            'Etag': etag.hexdigest(),
+            'X-Kinetic-Chunk-Count': num_chunks,
+            'X-Kinetic-Chunk-Nounce': nounce,
+            'X-Timestamp': put_timestamp.internal,
+            'name': '/a/c/%s' % self.buildKey('o'),
+        }
+        self.assertEqual(metadata, expected)

@@ -89,15 +89,18 @@ class KineticAuditor(ObjectAuditor):
                     head_key, size, metadata.get('Content-Length'))
                 df.quarantine()
                 return False
-            if etag.hexdigest() != metadata.get('ETag'):
+            got_etag = etag.hexdigest()
+            expected_etag = metadata.get('Etag')
+            if got_etag != expected_etag:
                 self.logger.warning(
                     'found object %r with etag %r instead of %r',
-                    head_key, etag.hexdigest(), metadata.get('Etag'))
+                    head_key, got_etag, expected_etag)
                 df.quarantine()
                 return False
         return True
 
     def run_once(self, *args, **kwargs):
+        self.reset_stats()
         override_devices = list_from_csv(kwargs.get('devices'))
         devices = override_devices or self._get_devices()
         self.logger.info('Starting sweep of %r', devices)
@@ -112,7 +115,6 @@ class KineticAuditor(ObjectAuditor):
                     self.stats['failures'] += 1
         self.logger.info('Finished sweep of %r (%ds) => %r', devices,
                          time.time() - start, self.stats)
-        self.reset_stats()
 
 
 def main():

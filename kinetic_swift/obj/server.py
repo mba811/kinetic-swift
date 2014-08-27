@@ -6,6 +6,7 @@ from collections import deque
 from uuid import uuid4
 from eventlet import sleep, Timeout, spawn_n
 import re
+import time
 
 import msgpack
 from swift.obj import diskfile, server
@@ -91,7 +92,6 @@ class DiskFileManager(diskfile.DiskFileManager):
             policy_index = 0
         else:
             policy_index = abs(int(policy_string))
-        datadir = head_key[policy_match.end():]
         datadir = head_key.split('.', 3)[1]
         return DiskFile(self, host, port, self.threadpools[device], None,
                         policy_idx=policy_index, _datadir=datadir,
@@ -227,15 +227,11 @@ class DiskFile(diskfile.DiskFile):
         for key in keys:
             while len(pending) >= self.read_depth:
                 entry = pending.popleft().wait()
-                yield str(entry.value)
+                yield str(entry.value) if entry else ''
             pending.append(self.conn.get(key))
         for resp in pending:
             entry = resp.wait()
-            if entry:
-                chunk = str(entry.value)
-            else:
-                chunk = ''
-            yield chunk
+            yield str(entry.value) if entry else ''
 
     @contextmanager
     def create(self, size=None):
@@ -341,12 +337,16 @@ class DiskFile(diskfile.DiskFile):
 
     def quarantine(self):
         timestamp = diskfile.Timestamp(self._metadata['X-Timestamp'])
-        key = self.object_key(timestamp.internal, self._extension,
-                              self._nounce)
-        blob = msgpack.packb(self._metadata)
-        self.conn.put('quarantine.' + key, blob, force=True,
-                      synchronization=self.synchronization).wait()
-        self.conn.delete(key, force=True).wait()
+        head_key = self.object_key(timestamp.internal, self._extension,
+                                   self._nounce)
+        keys = [head_key] + [
+            chunk_key(self.hashpath, self._nounce, i + 1) for i in
+            range(int(self._metadata['X-Kinetic-Chunk-Count']))]
+        quarantine_prefix = 'quarantine.%s.' % diskfile.Timestamp(
+            time.time()).internal
+        for key in keys:
+            resp = self.conn.rename(key, quarantine_prefix + key)
+            resp.wait()
 
     def get_data_file_size(self):
         return self._metadata['Content-Length']

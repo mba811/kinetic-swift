@@ -1,6 +1,7 @@
 from contextlib import closing
 import cPickle as pickle
 import gzip
+import itertools
 import os
 import time
 import random
@@ -205,6 +206,31 @@ class TestKineticReplicator(utils.KineticSwiftTestCase):
 
         # put a copy on the handoff
         expected = self.put_object(other_device, 'obj1')
+        # replicate to other servers
+        self.daemon._replicate(other_device)
+        result = self.get_object(source_device, 'obj1')
+        self.assertEquals(expected, result)
+        result = self.get_object(target_device, 'obj1')
+        self.assertEquals(expected, result)
+        # and now it's gone from handoff
+        self.assertRaises(server.diskfile.DiskFileNotExist, self.get_object,
+                          other_device, 'obj1')
+
+    def test_replicate_handoff_overwrites_old_version(self):
+        ts = (server.diskfile.Timestamp(t) for t in
+              itertools.count(int(time.time())))
+        source_device = '127.0.0.1:%s' % self.ports[0]
+        target_port = self.ports[1]
+        target_device = '127.0.0.1:%s' % target_port
+        other_port = self.ports[2]
+        other_device = '127.0.0.1:%s' % other_port
+
+        # put an old copy on source
+        self.put_object(source_device, 'obj1',
+                        timestamp=ts.next().internal)
+        # put a newer copy on the handoff
+        expected = self.put_object(other_device, 'obj1',
+                                   timestamp=ts.next().internal)
         # replicate to other servers
         self.daemon._replicate(other_device)
         result = self.get_object(source_device, 'obj1')

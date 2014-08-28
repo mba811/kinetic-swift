@@ -24,8 +24,14 @@ def split_key(key):
     else:
         policy_index = 0
     hashpath = parts[1]
+    timestamp = '.'.join(parts[2:4])
     nounce = parts[-1]
-    return policy_index, hashpath, nounce
+    return {
+        'policy_index': policy_index,
+        'hashpath': hashpath,
+        'nounce': nounce,
+        'timestamp': timestamp,
+    }
 
 
 class KineticReplicator(ObjectReplicator):
@@ -37,14 +43,14 @@ class KineticReplicator(ObjectReplicator):
     def iter_all_objects(self, conn):
         keys = conn.getKeyRange('objects,', 'objects/')
         for key in keys.wait():
-            # FIXME: clean up old tombstones
+            # FIXME: clean up hashdir and old tombstones
             yield key
 
     def find_target_devices(self, key):
-        policy_index, hashpath, _junk = split_key(key)
-        object_ring = self.get_object_ring(policy_index)
+        key_info = split_key(key)
+        object_ring = self.get_object_ring(key_info['policy_index'])
         # ring magic, find all of the nodes for the partion of the given hash
-        raw_digest = hashpath.decode('hex')
+        raw_digest = key_info['hashpath'].decode('hex')
         part = struct.unpack_from('>I', raw_digest)[0] >> \
             object_ring._part_shift
         devices = object_ring.get_part_nodes(part)
@@ -52,8 +58,8 @@ class KineticReplicator(ObjectReplicator):
 
     def iter_object_keys(self, conn, key):
         yield key
-        policy_index, hashpath, nounce = split_key(key)
-        chunk_key = 'chunks.%s.%s' % (hashpath, nounce)
+        key_info = split_key(key)
+        chunk_key = 'chunks.%(hashpath)s.%(nounce)s' % key_info
         resp = conn.getKeyRange(chunk_key + '.', chunk_key + '/')
         for key in resp.wait():
             yield key
@@ -66,12 +72,20 @@ class KineticReplicator(ObjectReplicator):
 
     def is_object_on_target(self, target, key):
         # get key ready for getPrevious on target
-        policy_index, hashpath, _nounce = split_key(key)
-        key = object_key(policy_index, hashpath)
+        key_info = split_key(key)
+        key = object_key(key_info['policy_index'], key_info['hashpath'])
 
         conn = self.get_conn(target)
         entry = conn.getPrevious(key).wait()
-        return entry and entry.key.startswith(key[:-1])
+        target_key_info = split_key
+        if not entry:
+            return False
+        target_key_info = split_key(entry.key)
+        if target_key_info['hashpath'] != key_info['hashpath']:
+            return False
+        if target_key_info['timestamp'] < key_info['timestamp']:
+            return False
+        return True
 
     def get_conn(self, device):
         host, port = device.split(':')

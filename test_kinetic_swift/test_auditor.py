@@ -35,7 +35,7 @@ class TestKineticObjectAuditor(KineticSwiftTestCase):
             writer.write(body)
             etag = hashlib.md5(body).hexdigest()
             writer.put({'X-Timestamp': time.time(),
-                        'Etag': etag,
+                        'ETag': etag,
                         'Content-Length': len(body)})
 
         with mock.patch('time.sleep', lambda x: None):
@@ -51,7 +51,7 @@ class TestKineticObjectAuditor(KineticSwiftTestCase):
             metadata = reader.get_metadata()
             self.assertEqual(body, ''.join(reader))
         expected = {
-            'Etag': etag,
+            'ETag': etag,
             'Content-Length': len(body),
         }
         for k, v in expected.items():
@@ -67,7 +67,7 @@ class TestKineticObjectAuditor(KineticSwiftTestCase):
             writer.write(body)
             hash_.update(body)
             writer.put({'X-Timestamp': time.time(),
-                        'Etag': hash_.hexdigest(),
+                        'ETag': hash_.hexdigest(),
                         'Content-Length': len(body)})
 
         for key in self.client.getKeyRange('chunks', 'chunks/').wait():
@@ -106,7 +106,7 @@ class TestKineticObjectAuditor(KineticSwiftTestCase):
             writer.write(body)
             hash_.update(body)
             writer.put({'X-Timestamp': time.time(),
-                        'Etag': hash_.hexdigest(),
+                        'ETag': hash_.hexdigest(),
                         'Content-Length': str(len(body))})
 
         for key in self.client.getKeyRange('chunks', 'chunks/').wait():
@@ -149,7 +149,7 @@ class TestKineticObjectAuditor(KineticSwiftTestCase):
                 writer.write(chunk)
                 hash_.update(chunk)
             writer.put({'X-Timestamp': put_timestamp.internal,
-                        'Etag': hash_.hexdigest(),
+                        'ETag': hash_.hexdigest(),
                         'Content-Length': str(num_chunks * chunk_size)})
 
         with mock.patch('time.sleep', lambda x: None):
@@ -186,7 +186,7 @@ class TestKineticObjectAuditor(KineticSwiftTestCase):
         metadata = msgpack.unpackb(self.client.get(head_key).wait().value)
         expected = {
             'Content-Length': str(num_chunks * chunk_size),
-            'Etag': etag.hexdigest(),
+            'ETag': etag.hexdigest(),
             'X-Kinetic-Chunk-Count': num_chunks,
             'X-Kinetic-Chunk-Nounce': nounce,
             'X-Timestamp': put_timestamp.internal,

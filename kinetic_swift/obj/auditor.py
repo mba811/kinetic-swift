@@ -90,7 +90,7 @@ class KineticAuditor(ObjectAuditor):
                 df.quarantine()
                 return False
             got_etag = etag.hexdigest()
-            expected_etag = metadata.get('Etag')
+            expected_etag = metadata.get('ETag')
             if got_etag != expected_etag:
                 self.logger.warning(
                     'found object %r with etag %r instead of %r',

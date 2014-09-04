@@ -3,6 +3,7 @@ import time
 import random
 import os
 import hashlib
+import email
 
 from swift.common.swob import Request
 from swift.common.utils import Timestamp, split_path, hash_path
@@ -32,8 +33,10 @@ class TestKineticObjectServer(KineticSwiftTestCase):
         super(TestKineticObjectServer, self).setUp()
         self.port = self.ports[0]
         self.client = self.client_map[self.port]
+        self.disk_chunk_size = 100
         self.conf = {
             'unlink_wait': 'true',
+            'disk_chunk_size': self.disk_chunk_size,
         }
         self.app = server.app_factory(self.conf)
         self.policy = random.choice(list(server.diskfile.POLICIES))
@@ -60,6 +63,57 @@ class TestKineticObjectServer(KineticSwiftTestCase):
         resp = req.get_response(self.app)
         self.assertEqual(resp.status_int, 200)
         self.assertEqual(resp.body, body)
+
+    def test_put_and_get_range(self):
+        # put object
+        headers = {
+            'x-timestamp': Timestamp(time.time()).internal,
+            'content-type': 'application/octet-stream',
+        }
+        body = 'test body'
+        req = Request.blank(self._get_path(), method='PUT', headers=headers)
+        req.body = body
+        resp = req.get_response(self.app)
+        self.assertEqual(resp.status_int, 201)
+
+        # get object with range
+        req = Request.blank(self._get_path())
+        req.range = 'bytes=0-4'
+        resp = req.get_response(self.app)
+        self.assertEqual(resp.status_int, 206)
+        self.assertEqual(resp.body, 'test ')
+
+        # get object with offset
+        req = Request.blank(self._get_path())
+        req.range = 'bytes=4-'
+        resp = req.get_response(self.app)
+        self.assertEqual(resp.status_int, 206)
+        self.assertEqual(resp.body, ' body')
+
+    def test_put_and_get_multirange(self):
+        # put object
+        headers = {
+            'x-timestamp': Timestamp(time.time()).internal,
+            'content-type': 'application/octet-stream',
+        }
+        req = Request.blank(self._get_path(), method='PUT', headers=headers)
+        num_chunks = 10
+        req.body = ''.join(chr(i + 97) * self.disk_chunk_size for i in
+                           range(num_chunks))
+        resp = req.get_response(self.app)
+        self.assertEqual(resp.status_int, 201)
+
+        # get object with range
+        req = Request.blank(self._get_path())
+        req.range = 'bytes=301-455,686-792'
+        resp = req.get_response(self.app)
+        self.assertEqual(resp.status_int, 206)
+        msg = email.message_from_string(
+            'Content-Type: %s\r\n' % resp.headers['Content-Type'] + resp.body)
+        parts = [p for p in msg.walk()][1:]
+        self.assertEqual(2, len(parts))
+        self.assertEqual(parts[0].get_payload(), 'd' * 99 + 'e' * 56)
+        self.assertEqual(parts[1].get_payload(), 'g' * 14 + 'h' * 93)
 
     def test_put_container_update(self):
         container_updates = []

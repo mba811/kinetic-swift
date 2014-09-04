@@ -147,6 +147,30 @@ class DiskFileReader(diskfile.DiskFileReader):
 
     def __init__(self, diskfile):
         self.diskfile = diskfile
+        self._suppress_file_closing = False
+
+    def app_iter_range(self, start, stop):
+        r = 0
+        if start or start == 0:
+            q, r = divmod(start, self.diskfile.disk_chunk_size)
+            self.diskfile.chunk_id = q
+        if stop is not None:
+            length = stop - start
+        else:
+            length = None
+        try:
+            for chunk in self:
+                if length is not None:
+                    length -= len(chunk) - r
+                    if length < 0:
+                        # Chop off the extra:
+                        yield chunk[r:length]
+                        break
+                yield chunk[r:]
+                r = 0
+        finally:
+            if not self._suppress_file_closing:
+                self.close()
 
     def __iter__(self):
         return iter(self.diskfile)
@@ -170,9 +194,8 @@ class DiskFile(diskfile.DiskFile):
         super(DiskFile, self).__init__(mgr, device_path, *args, **kwargs)
         self.hashpath = os.path.basename(self._datadir.rstrip('/'))
         self._buffer = bytearray()
-        # this is the first "disk_chunk_size" + metadata
         self._nounce = None
-        self.chunk_id = -1
+        self.chunk_id = 0
         self.upload_size = 0
         self.last_sync = 0
         # configurables
@@ -208,7 +231,7 @@ class DiskFile(diskfile.DiskFile):
 
     def reader(self, *args, **kwargs):
         self._took_reader = True
-        return self
+        return DiskFileReader(self)
 
     def close(self, **kwargs):
         self._metadata = None
@@ -217,14 +240,16 @@ class DiskFile(diskfile.DiskFile):
         if not self._took_reader:
             self.close()
 
+    def keys(self):
+        return [chunk_key(self.hashpath, self._nounce, i + 1) for i in
+                range(self.chunk_id,
+                      int(self._metadata['X-Kinetic-Chunk-Count']))]
+
     def __iter__(self):
         if not self._metadata:
             return
-        keys = [chunk_key(self.hashpath, self._nounce, i + 1) for i in
-                range(int(self._metadata['X-Kinetic-Chunk-Count']))]
-
         pending = deque()
-        for key in keys:
+        for key in self.keys():
             while len(pending) >= self.read_depth:
                 entry = pending.popleft().wait()
                 yield str(entry.value) if entry else ''

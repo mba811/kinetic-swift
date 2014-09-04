@@ -171,13 +171,14 @@ class TestKineticReplicator(utils.KineticSwiftTestCase):
         target_keys = target_resp.wait()
         self.assertEqual(len(source_keys), len(target_keys))
         for source_key, target_key in zip(source_keys, target_keys):
-            source_policy_index, source_hash, source_nounce = \
-                replicator.split_key(source_key)
-            target_policy_index, target_hash, target_nounce = \
-                replicator.split_key(target_key)
-            self.assertEqual(source_policy_index, target_policy_index)
-            self.assertEqual(source_hash, target_hash)
-            self.assertNotEqual(source_nounce, target_nounce)
+            source_key_info = replicator.split_key(source_key)
+            target_key_info = replicator.split_key(target_key)
+            for key in source_key_info:
+                if key == 'nounce':
+                    continue
+                self.assertEqual(source_key_info[key], target_key_info[key])
+            self.assertNotEqual(source_key_info['nounce'],
+                                target_key_info['nounce'])
         original_key_count = len(source_keys)
         # perform replication, should more or less no-op
         self.daemon._replicate(source_device)
@@ -187,13 +188,14 @@ class TestKineticReplicator(utils.KineticSwiftTestCase):
         target_keys = target_resp.wait()
         self.assertEqual(len(source_keys), len(target_keys))
         for source_key, target_key in zip(source_keys, target_keys):
-            source_policy_index, source_hash, source_nounce = \
-                replicator.split_key(source_key)
-            target_policy_index, target_hash, target_nounce = \
-                replicator.split_key(target_key)
-            self.assertEqual(source_policy_index, target_policy_index)
-            self.assertEqual(source_hash, target_hash)
-            self.assertNotEqual(source_nounce, target_nounce)
+            source_key_info = replicator.split_key(source_key)
+            target_key_info = replicator.split_key(target_key)
+            for key in source_key_info:
+                if key == 'nounce':
+                    continue
+                self.assertEqual(source_key_info[key], target_key_info[key])
+            self.assertNotEqual(source_key_info['nounce'],
+                                target_key_info['nounce'])
         post_replication_key_count = len(source_keys)
         self.assertEquals(original_key_count, post_replication_key_count)
 

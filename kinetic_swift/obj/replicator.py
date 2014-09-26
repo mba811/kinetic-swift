@@ -38,7 +38,7 @@ class KineticReplicator(ObjectReplicator):
 
     def __init__(self, conf):
         super(KineticReplicator, self).__init__(conf)
-        self.replication_mode = conf.get('kinetic_replication_mode', 'copy')
+        self.replication_mode = conf.get('kinetic_replication_mode', 'push')
 
     def iter_all_objects(self, conn):
         keys = conn.getKeyRange('objects,', 'objects/')

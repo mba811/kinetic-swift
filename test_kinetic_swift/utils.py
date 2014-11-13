@@ -9,6 +9,7 @@ import time
 import unittest
 
 import eventlet
+eventlet.monkey_patch()
 
 from kinetic_swift.client import KineticSwiftClient
 

@@ -1,23 +1,37 @@
 from collections import deque
 import errno
-from eventlet import Timeout, spawn_n
+from eventlet import Timeout, spawn_n, event
 
 from kinetic.asyncclient import AsyncClient
-from kinetic.greenclient import Response as BaseResponse
 import datetime
 
 
-class Response(BaseResponse):
+class Response(object):
 
     def __init__(self, client):
+        self.resp = event.Event()
+        self._hasError = False
         self.client = client
-        super(Response, self).__init__()
+
+    def setResponse(self, v):
+        self.resp.send(v)
+
+    def setError(self, e):
+        self._hasError = True
+        self.resp.send(e)
+
+    def ready(self):
+        return self.resp.ready()
 
     def wait(self):
         try:
             with Timeout(self.client.response_timeout):
                 try:
-                    return super(Response, self).wait()
+                    resp = self.resp.wait()
+                    if self._hasError:
+                        raise resp
+                    else:
+                        return resp
                 except OSError as e:
                     if e.errno == errno.ECONNRESET:
                         self.client.logger.error('Drive reset connection')

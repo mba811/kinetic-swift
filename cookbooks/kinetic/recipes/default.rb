@@ -52,7 +52,7 @@ end
 
 # build kinetic-simulator
 
-KINETIC_JAR="/vagrant/kinetic-java/kinetic-simulator/target/kinetic-simulator-0.7.0.2-SNAPSHOT-jar-with-dependencies.jar"
+KINETIC_JAR="/vagrant/kinetic-java/kinetic-simulator/target/kinetic-simulator-0.8.0.3-SNAPSHOT-jar-with-dependencies.jar"
 
 execute "sync-kinetic-proto" do
   cwd "/vagrant/kinetic-java"
@@ -87,6 +87,7 @@ bash "fix-git-relative-submodules" do
   rm */.git
   git submodule update
   EOF
+  not_if 'git status'
 end
 
 execute "python-protoc-build" do
@@ -125,6 +126,11 @@ end
     group "vagrant"
     action :create
   end
+end
+
+execute "setup-python-eggs" do
+  command "python -c 'import kinetic_swift.obj.server'"
+  action :run
 end
 
 {

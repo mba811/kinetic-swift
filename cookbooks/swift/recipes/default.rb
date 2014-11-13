@@ -126,6 +126,7 @@ bash "fix-git-relative-submodules" do
   rm */.git
   git submodule update
   EOF
+  not_if 'git status'
 end
 
 execute "pbr-pip-depends" do

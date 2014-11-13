@@ -20,7 +20,7 @@ DEFAULT_DEPTH = 2
 
 
 SYNC_OPTION_MAP = {
-    'default': Synchronization.INVALID_SYNCHRONIZATION,
+    'default': None,
     'writethrough': Synchronization.WRITETHROUGH,
     'writeback': Synchronization.WRITEBACK,
     'flush': Synchronization.FLUSH,

@@ -43,7 +43,7 @@ class TestDiskFile(KineticSwiftTestCase):
 
     def test_config_sync_options(self):
         expectations = {
-            'default': -1,
+            'default': None,
             'writethrough': 1,
             'writeback': 2,
             'flush': 3,

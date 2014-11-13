@@ -39,6 +39,8 @@ class KineticReplicator(ObjectReplicator):
     def __init__(self, conf):
         super(KineticReplicator, self).__init__(conf)
         self.replication_mode = conf.get('kinetic_replication_mode', 'push')
+        self.connect_timeout = int(conf.get('connect_timeout', 3))
+        self.response_timeout = int(conf.get('response_timeout', 30))
 
     def iter_all_objects(self, conn):
         keys = conn.getKeyRange('objects,', 'objects/')
@@ -89,7 +91,11 @@ class KineticReplicator(ObjectReplicator):
 
     def get_conn(self, device):
         host, port = device.split(':')
-        conn = KineticSwiftClient(self.logger, host, int(port))
+        conn = KineticSwiftClient(
+            self.logger, host, int(port),
+            connect_timeout=self.connect_timeout,
+            response_timeout=self.response_timeout,
+        )
         return conn
 
     def replicate_object(self, conn, key, targets, delete=False):

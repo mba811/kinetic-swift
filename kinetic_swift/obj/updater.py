@@ -13,8 +13,7 @@ from swift.common.daemon import run_daemon
 from swift.common.storage_policy import POLICIES
 from swift.common.swob import HeaderKeyDict
 from swift.common.utils import parse_options, list_from_csv
-from swift.obj.updater import ObjectUpdater, dump_recon_cache, is_success, \
-    HTTP_NOT_FOUND
+from swift.obj.updater import ObjectUpdater, dump_recon_cache
 
 from kinetic_swift.obj.server import DiskFileManager
 
@@ -105,13 +104,13 @@ class KineticUpdater(ObjectUpdater):
         new_successes = False
         for node in nodes:
             if node['id'] not in successes:
-                status = self.object_update(node, part, update['op'], obj,
-                                            headers)
-                if not is_success(status) and status != HTTP_NOT_FOUND:
-                    success = False
-                else:
+                new_success, node_id = self.object_update(
+                    node, part, update['op'], obj, headers)
+                if new_success:
                     successes.append(node['id'])
                     new_successes = True
+                else:
+                    success = False
         if success:
             self.successes += 1
             self.logger.increment('successes')

@@ -153,7 +153,7 @@ class TestKineticObjectServer(KineticSwiftTestCase):
             self.assertEqual(container, 'c')
             self.assertEqual(obj, self.buildKey('o'))
             expected = {
-                'User-Agent': 'obj-server %d' % os.getpid(),
+                'User-Agent': 'object-server %d' % os.getpid(),
                 'X-Size': str(len(body)),
                 'X-Content-Type': 'application/octet-stream',
                 'X-Etag': hashlib.md5(body).hexdigest(),
@@ -201,7 +201,7 @@ class TestKineticObjectServer(KineticSwiftTestCase):
             'obj': self.buildKey('o'),
             'op': 'PUT',
             'headers': {
-                'User-Agent': 'obj-server %d' % os.getpid(),
+                'User-Agent': 'object-server %d' % os.getpid(),
                 'X-Size': str(len(body)),
                 'X-Content-Type': 'application/octet-stream',
                 'X-Etag': hashlib.md5(body).hexdigest(),
@@ -252,7 +252,7 @@ class TestKineticObjectServer(KineticSwiftTestCase):
                 'Referer': req.as_referer(),
                 'X-Backend-Storage-Policy-Index': str(int(self.policy)),
                 'X-Timestamp': req_timestamp.internal,
-                'User-Agent': 'obj-server %d' % os.getpid(),
+                'User-Agent': 'object-server %d' % os.getpid(),
                 'X-Trans-Id': '-',
             }
             self.assertEqual(headers, expected)
@@ -295,7 +295,7 @@ class TestKineticObjectServer(KineticSwiftTestCase):
             'obj': self.buildKey('o'),
             'op': 'DELETE',
             'headers': {
-                'User-Agent': 'obj-server %d' % os.getpid(),
+                'User-Agent': 'object-server %d' % os.getpid(),
                 'X-Timestamp': req_timestamp.internal,
                 'X-Trans-Id': '-',
                 'X-Backend-Storage-Policy-Index': str(int(self.policy)),

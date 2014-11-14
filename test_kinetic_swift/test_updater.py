@@ -87,7 +87,6 @@ class TestKineticObjectUpdater(KineticSwiftTestCase):
         self.assertEquals(self.container_ring.replicas,
                           len(container_updates))
         expected_headers = {
-            'user-agent': 'obj-updater %d' % os.getpid(),
             'X-Size': str(len(body)),
             'X-Content-Type': 'application/octet-stream',
             'X-Etag': hashlib.md5(body).hexdigest(),
@@ -97,11 +96,11 @@ class TestKineticObjectUpdater(KineticSwiftTestCase):
             'Referer': req.as_referer(),
         }
         expected_updates = [
-            ('10.0.0.0', 1000, 'PUT', 'sda', '1', 'a', 'c',
+            ('10.0.0.0', 1000, 'PUT', 'sda', '0', 'a', 'c',
              self.buildKey('o'), expected_headers),
-            ('10.0.0.1', 1001, 'PUT', 'sdb', '1', 'a', 'c',
+            ('10.0.0.1', 1001, 'PUT', 'sdb', '0', 'a', 'c',
              self.buildKey('o'), expected_headers),
-            ('10.0.0.2', 1002, 'PUT', 'sdc', '1', 'a', 'c',
+            ('10.0.0.2', 1002, 'PUT', 'sdc', '0', 'a', 'c',
              self.buildKey('o'), expected_headers),
         ]
         self.assertEqual(len(container_updates), len(expected_updates))
@@ -164,7 +163,6 @@ class TestKineticObjectUpdater(KineticSwiftTestCase):
         self.assertEquals(self.container_ring.replicas,
                           len(container_updates))
         expected_headers = {
-            'user-agent': 'obj-updater %d' % os.getpid(),
             'X-Size': str(len(body)),
             'X-Content-Type': 'application/octet-stream',
             'X-Etag': hashlib.md5(body).hexdigest(),
@@ -174,11 +172,11 @@ class TestKineticObjectUpdater(KineticSwiftTestCase):
             'Referer': req.as_referer(),
         }
         expected_updates = [
-            ('10.0.0.0', 1000, 'PUT', 'sda', '1', 'a', 'c',
+            ('10.0.0.0', 1000, 'PUT', 'sda', '0', 'a', 'c',
              self.buildKey('o'), expected_headers),
-            ('10.0.0.1', 1001, 'PUT', 'sdb', '1', 'a', 'c',
+            ('10.0.0.1', 1001, 'PUT', 'sdb', '0', 'a', 'c',
              self.buildKey('o'), expected_headers),
-            ('10.0.0.2', 1002, 'PUT', 'sdc', '1', 'a', 'c',
+            ('10.0.0.2', 1002, 'PUT', 'sdc', '0', 'a', 'c',
              self.buildKey('o'), expected_headers),
         ]
         self.assertEqual(len(container_updates), len(expected_updates))
@@ -208,7 +206,7 @@ class TestKineticObjectUpdater(KineticSwiftTestCase):
         self.assertEqual(self.updater.stats, {
             'failures': 1, 'success': 1, 'found_updates': 2})
         expected_updates = [
-            ('10.0.0.2', 1002, 'PUT', 'sdc', '1', 'a', 'c',
+            ('10.0.0.2', 1002, 'PUT', 'sdc', '0', 'a', 'c',
              self.buildKey('o'), expected_headers),
         ]
         self.assertEqual(len(container_updates), len(expected_updates))

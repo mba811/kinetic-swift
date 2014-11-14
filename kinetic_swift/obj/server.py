@@ -146,6 +146,7 @@ class DiskFileManager(diskfile.DiskFileManager):
 class DiskFileReader(diskfile.DiskFileReader):
 
     def __init__(self, diskfile):
+        self._use_splice = False
         self.diskfile = diskfile
         self._suppress_file_closing = False
 

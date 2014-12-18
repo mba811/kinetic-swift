@@ -1,6 +1,6 @@
 [submodule "swift"]
 	path = swift
-	url = https://github.com/openstack/swift.git
+	url = https://github.com/seagate/swift.git
 [submodule "python-swiftclient"]
 	path = python-swiftclient
 	url = https://github.com/openstack/python-swiftclient.git

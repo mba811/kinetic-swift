@@ -1,5 +1,4 @@
 import os
-os.environ['PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION'] = 'cpp'
 import logging
 from contextlib import contextmanager
 from collections import deque

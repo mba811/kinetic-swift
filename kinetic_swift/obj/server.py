@@ -86,7 +86,7 @@ class DiskFileManager(diskfile.DiskFileManager):
         # TODO: we can probably cache this while the drive is online
         address = self.get_kinetic_dev_path(device)
 
-        if adresss is None:
+        if address is None:
             raise DiskFileDeviceUnavailable()
 
         port = 8123 # default port

@@ -6,7 +6,7 @@ from uuid import uuid4
 from eventlet import sleep, Timeout, spawn_n
 import re
 import time
-
+import memcache
 import msgpack
 from swift.obj import diskfile, server
 
@@ -16,7 +16,8 @@ from kinetic.common import Synchronization
 
 
 DEFAULT_DEPTH = 2
-
+AVAILABLE_PREFIX = 'kinetic/available/'
+MEMCACHE_SERVERS = ['127.0.0.1:11211']
 
 SYNC_OPTION_MAP = {
     'default': None,
@@ -54,7 +55,6 @@ def async_key(policy_index, hashpath, timestamp):
 def get_nounce(key):
     return key.rsplit('.', 1)[-1]
 
-
 class DiskFileManager(diskfile.DiskFileManager):
 
     def __init__(self, conf, logger):
@@ -74,10 +74,26 @@ class DiskFileManager(diskfile.DiskFileManager):
         self.conn_pool = {}
         self.unlink_wait = \
             server.config_true_value(conf.get('unlink_wait', 'false'))
+        self.available_prefix = conf.get('kinetic_available_prefix', AVAILABLE_PREFIX)
+        self.memcache_client = memcache.Client(MEMCACHE_SERVERS, debug=0)
+
+    def get_kinetic_dev_path(self, id):
+        return self.memcache_client.get(self.available_prefix + str(id))
 
     def get_diskfile(self, device, partition, account, container, obj,
                      policy_idx=0, **kwargs):
-        host, port = device.split(':')
+
+        # TODO: we can probably cache this while the drive is online
+        address = self.get_kinetic_dev_path(device)
+
+        if adresss is None:
+            raise DiskFileDeviceUnavailable()
+
+        port = 8123 # default port
+        address = device.split(':')
+        host = address[0]
+        if len(address) > 1: port = address[1]
+
         return DiskFile(self, host, port, self.threadpools[device],
                         partition, account, container, obj,
                         policy_idx=policy_idx, unlink_wait=self.unlink_wait,

@@ -11,7 +11,7 @@ import msgpack
 from swift.obj import diskfile, server
 
 from kinetic_swift.client import KineticSwiftClient
-
+from swift.common.exceptions import DiskFileDeviceUnavailable
 from kinetic.common import Synchronization
 
 

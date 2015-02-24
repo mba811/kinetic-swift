@@ -90,7 +90,7 @@ class DiskFileManager(diskfile.DiskFileManager):
             raise DiskFileDeviceUnavailable()
 
         port = 8123 # default port
-        address = device.split(':')
+        address = address.split(':')
         host = address[0]
         if len(address) > 1: port = address[1]
 

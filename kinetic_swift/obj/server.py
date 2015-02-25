@@ -80,9 +80,10 @@ class DiskFileManager(diskfile.DiskFileManager):
     def get_kinetic_dev_path(self, id):
         return self.memcache_client.get(self.available_prefix + str(id))
 
-    def get_diskfile(self, device, partition, account, container, obj,
-                     policy_idx=0, **kwargs):
+    def tag_kinetic_device_as_offline(self, id):
+        self.memcache_client.delete(self.available_prefix + str(id))
 
+    def _get_address_for_device(self, device):
         # TODO: we can probably cache this while the drive is online
         address = self.get_kinetic_dev_path(device)
 
@@ -94,13 +95,22 @@ class DiskFileManager(diskfile.DiskFileManager):
         host = address[0]
         if len(address) > 1: port = address[1]
 
-        return DiskFile(self, host, port, self.threadpools[device],
+        return (host,port)
+
+    def get_diskfile(self, device, partition, account, container, obj,
+                     policy_idx=0, **kwargs):
+
+        host, port = self._get_address_for_device(device)
+
+        return DiskFile(self, device, host, port, self.threadpools[device],
                         partition, account, container, obj,
                         policy_idx=policy_idx, unlink_wait=self.unlink_wait,
                         **kwargs)
 
     def get_diskfile_from_audit_location(self, device, head_key):
-        host, port = device.split(':')
+
+        host, port = self._get_address_for_device(device)
+
         policy_match = re.match('objects([-]?[0-9]?)\.', head_key)
         policy_string = policy_match.group(1)
         if not policy_string:
@@ -108,18 +118,26 @@ class DiskFileManager(diskfile.DiskFileManager):
         else:
             policy_index = abs(int(policy_string))
         datadir = head_key.split('.', 3)[1]
-        return DiskFile(self, host, port, self.threadpools[device], None,
+        return DiskFile(self, device, host, port, self.threadpools[device], None,
                         policy_idx=policy_index, _datadir=datadir,
                         unlink_wait=self.unlink_wait)
 
     def pickle_async_update(self, device, account, container, obj, data,
                             timestamp, policy_idx):
-        host, port = device.split(':')
+
+        host, port = self._get_address_for_device(device)
+
         hashpath = diskfile.hash_path(account, container, obj)
         key = async_key(policy_idx, hashpath, timestamp)
         blob = msgpack.packb(data)
-        resp = self.get_connection(host, port).put(key, blob)
-        resp.wait()
+        try:
+            conn = self.get_connection(host, port)
+            resp = conn.put(key, blob)
+            resp.wait()
+        except:
+            # Mark device as offline for other object-servers
+            self.tag_kinetic_device_as_offline(device)
+            raise
         self.logger.increment('async_pendings')
 
     def _new_connection(self, host, port, **kwargs):
@@ -137,6 +155,7 @@ class DiskFileManager(diskfile.DiskFileManager):
                     host, port, i))
             if i < self.connect_retry:
                 sleep(1)
+
         msg = 'Unable to connect to drive %s:%s after %s attempts' % (
             host, port, i)
         self.logger.error(msg)
@@ -197,7 +216,8 @@ class DiskFileReader(diskfile.DiskFileReader):
 
 class DiskFile(diskfile.DiskFile):
 
-    def __init__(self, mgr, host, port, *args, **kwargs):
+    def __init__(self, mgr, device, host, port, *args, **kwargs):
+        self.device = device
         self.unlink_wait = kwargs.pop('unlink_wait', False)
         device_path = ''
         self.disk_chunk_size = kwargs.pop('disk_chunk_size',
@@ -220,7 +240,12 @@ class DiskFile(diskfile.DiskFile):
         self.delete_depth = self._mgr.delete_depth
         self.synchronization = self._mgr.synchronization
         self.conn = None
-        self.conn = mgr.get_connection(host, port)
+        try:
+            self.conn = mgr.get_connection(host, port)
+        except:
+             # Mark device as offline for other object-servers
+            self.tag_kinetic_device_as_offline(self.device)
+            raise
         self.logger = mgr.logger
 
     def object_key(self, *args, **kwargs):

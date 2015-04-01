@@ -11,6 +11,7 @@ from swift.common.daemon import run_daemon
 from swift.common.storage_policy import POLICIES
 from swift.common.utils import parse_options, list_from_csv
 from swift.obj.auditor import ObjectAuditor, dump_recon_cache, ratelimit_sleep
+from swift import gettext_ as _
 
 from kinetic_swift.obj.server import DiskFileManager
 
@@ -26,6 +27,7 @@ class KineticAuditor(ObjectAuditor):
             self.conf.get('files_per_second', 20))
         self.max_bytes_per_second = float(
             self.conf.get('bytes_per_second', 10000000))
+        self.interval = 30    
 
     def reset_stats(self):
         self.stats = defaultdict(int)

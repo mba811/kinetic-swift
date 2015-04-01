@@ -44,7 +44,7 @@ end
 
 execute "install-python-protobuf" do
   cwd "/opt/protobuf-#{PROTOBUF_VERSION}/python/"
-  command "python setup.py build && python setup.py install"
+  command "python setup.py build && pip install -e ."
   environment "PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION" => "cpp"
   creates "/usr/local/lib/python2.7/dist-packages/" \
     "protobuf-#{PROTOBUF_VERSION}-py2.7-linux-x86_64.egg/"
@@ -97,14 +97,14 @@ end
 
 execute "python-kinetic-install" do
   cwd "/vagrant/kinetic-py"
-  command "pip install -r requirements.txt && python setup.py install"
+  command "pip install -r requirements.txt && pip install -e ."
 end
 
 # install kinetic-swift plugin
 
 execute "python-kinetic-swift-install" do
   cwd "/vagrant/"
-  command "python setup.py develop"
+  command "pip install -e ."
   creates "/usr/local/lib/python2.7/dist-packages/kinetic-swift.egg-link"
 end
 

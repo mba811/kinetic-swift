@@ -14,6 +14,7 @@ from swift.common.storage_policy import POLICIES
 from swift.common.swob import HeaderKeyDict
 from swift.common.utils import parse_options, list_from_csv
 from swift.obj.updater import ObjectUpdater, dump_recon_cache
+from swift import gettext_ as _
 
 from kinetic_swift.obj.server import DiskFileManager
 

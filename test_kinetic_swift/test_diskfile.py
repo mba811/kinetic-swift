@@ -1,3 +1,16 @@
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#    http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or
+# implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 import time
 import unittest
 import random
@@ -18,9 +31,11 @@ class TestDiskFile(KineticSwiftTestCase):
         self.device = 'localhost:%s' % self.port
         self.client = self.client_map[self.port]
         self.logger = debug_logger('test-kinetic')
-        self.mgr = server.DiskFileManager({}, self.logger)
-        self.mgr.unlink_wait = True
+        server.install_kinetic_diskfile()
         self.policy = random.choice(list(server.diskfile.POLICIES))
+        self.mgr = server.diskfile.DiskFileRouter(
+            {}, self.logger)[self.policy]
+        self.mgr.unlink_wait = True
 
     def test_manager_config(self):
         conf = {
@@ -34,7 +49,7 @@ class TestDiskFile(KineticSwiftTestCase):
         mgr = server.DiskFileManager(conf, self.logger)
         self.assertEqual(mgr.connect_retry, 6)
         df = mgr.get_diskfile(self.device, '0', 'a', 'c', self.buildKey('o'),
-                              policy_idx=int(self.policy))
+                              self.policy)
         self.assertEqual(df.conn.conn.connect_timeout, 10)
         self.assertEqual(df.conn.response_timeout, 90)
         self.assertEqual(df.write_depth, 2)
@@ -55,22 +70,19 @@ class TestDiskFile(KineticSwiftTestCase):
 
     def test_create(self):
         df = self.mgr.get_diskfile(self.device, '0', 'a', 'c',
-                                   self.buildKey('o'),
-                                   policy_idx=int(self.policy))
+                                   self.buildKey('o'), self.policy)
         self.assert_(isinstance(df.conn, KineticSwiftClient))
 
     def test_put(self):
         df = self.mgr.get_diskfile(self.device, '0', 'a', 'c',
-                                   self.buildKey('o'),
-                                   policy_idx=int(self.policy))
+                                   self.buildKey('o'), self.policy)
         with df.create() as writer:
             writer.write('awesome')
             writer.put({'X-Timestamp': time.time()})
 
     def test_put_and_get(self):
         df = self.mgr.get_diskfile(self.device, '0', 'a', 'c',
-                                   self.buildKey('o'),
-                                   policy_idx=int(self.policy))
+                                   self.buildKey('o'), self.policy)
         req_timestamp = time.time()
         with df.create() as writer:
             writer.write('awesome')
@@ -95,8 +107,7 @@ class TestDiskFile(KineticSwiftTestCase):
             conf = {'synchronization': sync_option}
             mgr = server.DiskFileManager(conf, self.logger)
             df = mgr.get_diskfile(self.device, '0', 'a', 'c',
-                                  self.buildKey('o'),
-                                  policy_idx=int(self.policy))
+                                  self.buildKey('o'), self.policy)
             options = {}
 
             def capture_args(*args, **kwargs):
@@ -128,8 +139,7 @@ class TestDiskFile(KineticSwiftTestCase):
             mgr = server.DiskFileManager(conf, self.logger)
             mgr.unlink_wait = True
             df = mgr.get_diskfile(self.device, '0', 'a', 'c',
-                                  self.buildKey('o'),
-                                  policy_idx=int(self.policy))
+                                  self.buildKey('o'), self.policy)
             req_timestamp = time.time()
             with df.create() as writer:
                 writer.write(expected_body)
@@ -151,8 +161,7 @@ class TestDiskFile(KineticSwiftTestCase):
 
     def test_get_not_found(self):
         df = self.mgr.get_diskfile(self.device, '0', 'a', 'c',
-                                   self.buildKey('o'),
-                                   policy_idx=int(self.policy))
+                                   self.buildKey('o'), self.policy)
         try:
             df.open()
         except server.diskfile.DiskFileNotExist:
@@ -164,8 +173,8 @@ class TestDiskFile(KineticSwiftTestCase):
 
     def test_multi_chunk_put_and_get(self):
         df = self.mgr.get_diskfile(self.device, '0', 'a', 'c',
-                                   self.buildKey('o'), disk_chunk_size=10,
-                                   policy_idx=int(self.policy))
+                                   self.buildKey('o'), self.policy,
+                                   disk_chunk_size=10)
         req_timestamp = time.time()
         with df.create() as writer:
             chunk = '\x00' * 10
@@ -195,9 +204,8 @@ class TestDiskFile(KineticSwiftTestCase):
         disk_chunk_count = q if not r else q + 1
 
         df = self.mgr.get_diskfile(self.device, '0', 'a', 'c',
-                                   self.buildKey('o'),
-                                   disk_chunk_size=disk_chunk_size,
-                                   policy_idx=int(self.policy))
+                                   self.buildKey('o'), self.policy,
+                                   disk_chunk_size=disk_chunk_size)
         req_timestamp = time.time()
         with df.create() as writer:
             chunk = '\x00' * write_chunk_size
@@ -220,8 +228,8 @@ class TestDiskFile(KineticSwiftTestCase):
 
     def test_write_and_delete(self):
         df = self.mgr.get_diskfile(self.device, '0', 'a', 'c',
-                                   self.buildKey('o'), disk_chunk_size=10,
-                                   policy_idx=int(self.policy))
+                                   self.buildKey('o'), self.policy,
+                                   disk_chunk_size=10)
         req_timestamp = time.time()
         with df.create() as writer:
             chunk = '\x00' * 10
@@ -263,8 +271,8 @@ class TestDiskFile(KineticSwiftTestCase):
         disk_chunk_count = num_chunks
 
         df = self.mgr.get_diskfile(self.device, '0', 'a', 'c',
-                                   self.buildKey('o'), disk_chunk_size=10,
-                                   policy_idx=int(self.policy))
+                                   self.buildKey('o'), self.policy,
+                                   disk_chunk_size=10)
         req_timestamp = time.time()
         with df.create() as writer:
             chunk = '\x00' * disk_chunk_size

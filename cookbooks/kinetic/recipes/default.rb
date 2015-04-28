@@ -1,6 +1,24 @@
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#    http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or
+# implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 execute "apt-get-update" do
   command "apt-get update && touch /tmp/.apt-get-update"
   creates "/tmp/.apt-get-update"
+  action :run
+end
+
+execute "apt-get-install-fix-kinetic" do
+  command "apt-get -f install -y"
   action :run
 end
 
@@ -77,7 +95,7 @@ execute "python-submodule-update" do
   command "git submodule init && git submodule update"
 end
 
-bash "fix-git-relative-submodules" do
+bash "fix-git-relative-submodules-kinetic" do
   cwd "/vagrant"
   code <<-EOF
   for path in $(find ./.git/modules -name config); do
@@ -87,7 +105,7 @@ bash "fix-git-relative-submodules" do
   rm */.git
   git submodule update
   EOF
-  not_if 'git status'
+  not_if 'cd /vagrant && git status'
 end
 
 execute "python-protoc-build" do

@@ -1,3 +1,16 @@
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#    http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or
+# implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 import errno
 from optparse import OptionParser
 import os
@@ -13,7 +26,7 @@ from swift import gettext_ as _
 from swift.common.storage_policy import POLICIES
 
 from kinetic_swift.client import KineticSwiftClient
-from kinetic_swift.obj.server import object_key
+from kinetic_swift.obj.server import object_key, install_kinetic_diskfile
 
 
 def split_key(key):
@@ -37,6 +50,7 @@ def split_key(key):
 class KineticReplicator(ObjectReplicator):
 
     def __init__(self, conf):
+        install_kinetic_diskfile()
         super(KineticReplicator, self).__init__(conf)
         self.replication_mode = conf.get('kinetic_replication_mode', 'push')
         self.connect_timeout = int(conf.get('connect_timeout', 3))
@@ -48,14 +62,13 @@ class KineticReplicator(ObjectReplicator):
             # FIXME: clean up hashdir and old tombstones
             yield key
 
-    def find_target_devices(self, key):
+    def find_target_devices(self, key, policy):
         key_info = split_key(key)
-        object_ring = self.get_object_ring(key_info['policy_index'])
         # ring magic, find all of the nodes for the partion of the given hash
         raw_digest = key_info['hashpath'].decode('hex')
         part = struct.unpack_from('>I', raw_digest)[0] >> \
-            object_ring._part_shift
-        devices = object_ring.get_part_nodes(part)
+            policy.object_ring._part_shift
+        devices = policy.object_ring.get_part_nodes(part)
         return [d['device'] for d in devices]
 
     def iter_object_keys(self, conn, key):
@@ -122,12 +135,12 @@ class KineticReplicator(ObjectReplicator):
             self.logger.info('successfully removed handoff %r to %r',
                              key, targets)
 
-    def replicate_device(self, device, conn):
+    def replicate_device(self, device, conn, policy):
         self.logger.info('begining replication pass for %r', device)
         for key in self.iter_all_objects(conn):
             # might be a good place to collect jobs and group by
             # partition and/or target
-            targets = list(self.find_target_devices(key))
+            targets = list(self.find_target_devices(key, policy))
             try:
                 targets.remove(device)
             except ValueError:
@@ -138,13 +151,14 @@ class KineticReplicator(ObjectReplicator):
                 delete = False
             self.replicate_object(conn, key, targets, delete=delete)
 
-    def _replicate(self, *devices):
+    def _replicate(self, *devices, **kwargs):
+        policy = kwargs.get('policy', POLICIES.legacy)
         for device in devices:
             try:
                 # might be a good place to go multiprocess
                 conn = self.get_conn(device)
                 try:
-                    self.replicate_device(device, conn)
+                    self.replicate_device(device, conn, policy)
                 except socket.error as e:
                     if e.errno != errno.ECONNREFUSED:
                         raise
@@ -162,12 +176,12 @@ class KineticReplicator(ObjectReplicator):
         self.last_replication_count = -1
         self.partition_times = []
         for policy in POLICIES:
-            obj_ring = self.get_object_ring(policy.idx)
+            obj_ring = self.load_object_ring(policy)
             devices = override_devices or [d['device'] for d in
                                            obj_ring.devs]
             self.logger.debug(_("Begin replication for %r"), policy)
             try:
-                self._replicate(*devices)
+                self._replicate(*devices, policy=policy)
             except Exception:
                 self.logger.exception(
                     _("Exception in top-level replication loop"))

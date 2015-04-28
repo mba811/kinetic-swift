@@ -1,3 +1,16 @@
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#    http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or
+# implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 from contextlib import closing
 import cPickle as pickle
 import gzip
@@ -62,19 +75,19 @@ class TestKineticReplicator(utils.KineticSwiftTestCase):
             'kinetic_replication_mode': self.REPLICATION_MODE,
         }
         self.daemon = replicator.KineticReplicator(conf)
+        # force ring reload
+        for policy in server.diskfile.POLICIES:
+            policy.object_ring = None
+            self.daemon.load_object_ring(policy)
         self.logger = self.daemon.logger = \
             utils.debug_logger('test-kinetic-replicator')
-        self.mgr = server.DiskFileManager({}, self.logger)
+        self._df_router = server.diskfile.DiskFileRouter({}, self.logger)
         self.policy = random.choice(list(server.diskfile.POLICIES))
-
-    def tearDown(self):
-        for policy in storage_policy.POLICIES:
-            policy.object_ring = None
-        super(TestKineticReplicator, self).tearDown()
+        self.mgr = self._df_router[self.policy]
 
     def put_object(self, device, object_name, body='', timestamp=None):
         df = self.mgr.get_diskfile(device, '0', 'a', 'c', object_name,
-                                   policy_idx=int(self.policy))
+                                   policy=self.policy)
         metadata = {'X-Timestamp': timestamp or time.time()}
         with df.create() as writer:
             writer.write(body)
@@ -83,7 +96,7 @@ class TestKineticReplicator(utils.KineticSwiftTestCase):
 
     def get_object(self, device, object_name):
         df = self.mgr.get_diskfile(device, '0', 'a', 'c', object_name,
-                                   policy_idx=int(self.policy))
+                                   policy=self.policy)
         with df.open() as reader:
             metadata = reader.get_metadata()
             body = ''.join(reader)
@@ -93,7 +106,8 @@ class TestKineticReplicator(utils.KineticSwiftTestCase):
         self.assertEqual(self.daemon.replication_mode, self.REPLICATION_MODE)
         self.assertEqual(self.daemon.swift_dir, self.test_dir)
         expected_path = os.path.join(self.test_dir, 'object.ring.gz')
-        object_ring = self.daemon.get_object_ring(0)
+        object_ring = self.daemon.load_object_ring(
+            server.diskfile.POLICIES.legacy)
         self.assertEqual(object_ring.serialized_path, expected_path)
         self.assertEquals(len(object_ring.devs), len(self.ports))
         for client in self.client_map.values():
@@ -135,7 +149,7 @@ class TestKineticReplicator(utils.KineticSwiftTestCase):
                           other_device, 'obj1')
 
     def test_replicate_random_chunks(self):
-        object_ring = self.daemon.get_object_ring(0)
+        object_ring = self.policy.object_ring
         _part, devices = object_ring.get_nodes('a', 'c', 'random_object')
         self.assertEquals(2, len(devices))
         source_device, target_device = [d['device'] for d in devices]

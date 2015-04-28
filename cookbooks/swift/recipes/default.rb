@@ -10,6 +10,11 @@ execute "apt-get-update" do
   action :run
 end
 
+execute "apt-get-install-fix-swift" do
+  command "apt-get -f install -y"
+  action :run
+end
+
 required_packages = [
   "curl", "gcc", "memcached", "rsync", "sqlite3", "xfsprogs", "git-core",
   "python-setuptools", "python-coverage", "python-dev", "python-nose",
@@ -116,7 +121,7 @@ end
 
 # python install
 
-bash "fix-git-relative-submodules" do
+bash "fix-git-relative-submodules-swift" do
   cwd "/vagrant"
   code <<-EOF
   for path in $(find ./.git/modules -name config); do
@@ -126,7 +131,7 @@ bash "fix-git-relative-submodules" do
   rm */.git
   git submodule update
   EOF
-  not_if 'git status'
+  not_if 'cd /vagrant && git status'
 end
 
 execute "pbr-pip-depends" do

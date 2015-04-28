@@ -1,3 +1,16 @@
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#    http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or
+# implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 import hashlib
 import time
 import random
@@ -28,8 +41,7 @@ class TestKineticObjectAuditor(KineticSwiftTestCase):
 
     def test_put_and_audit(self):
         df = self.auditor.mgr.get_diskfile(self.device, '0', 'a', 'c',
-                                           self.buildKey('o'),
-                                           policy_idx=int(self.policy))
+                                           self.buildKey('o'), self.policy)
         body = 'awesome'
         with df.create() as writer:
             writer.write(body)
@@ -59,8 +71,7 @@ class TestKineticObjectAuditor(KineticSwiftTestCase):
 
     def test_missing_chunk_key(self):
         df = self.auditor.mgr.get_diskfile(self.device, '0', 'a', 'c',
-                                           self.buildKey('o'),
-                                           policy_idx=int(self.policy))
+                                           self.buildKey('o'), self.policy)
         body = 'awesome'
         hash_ = hashlib.md5()
         with df.create() as writer:
@@ -98,8 +109,7 @@ class TestKineticObjectAuditor(KineticSwiftTestCase):
 
     def test_invalid_chunk(self):
         df = self.auditor.mgr.get_diskfile(self.device, '0', 'a', 'c',
-                                           self.buildKey('o'),
-                                           policy_idx=int(self.policy))
+                                           self.buildKey('o'), self.policy)
         body = 'awesome'
         hash_ = hashlib.md5()
         with df.create() as writer:
@@ -138,8 +148,7 @@ class TestKineticObjectAuditor(KineticSwiftTestCase):
         num_chunks = 8
         chunk_size = 100
         df = self.auditor.mgr.get_diskfile(self.device, '0', 'a', 'c',
-                                           self.buildKey('o'),
-                                           policy_idx=int(self.policy),
+                                           self.buildKey('o'), self.policy,
                                            disk_chunk_size=chunk_size)
         chunk = 'a' * chunk_size
         hash_ = hashlib.md5()

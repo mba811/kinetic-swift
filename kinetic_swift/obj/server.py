@@ -1,5 +1,17 @@
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#    http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or
+# implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 import os
-os.environ['PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION'] = 'cpp'
 import logging
 from contextlib import contextmanager
 from collections import deque
@@ -10,6 +22,8 @@ import time
 
 import msgpack
 from swift.obj import diskfile, server
+from swift.common.storage_policy import (POLICIES, split_policy_string,
+                                         PolicyError)
 
 from kinetic_swift.client import KineticSwiftClient
 
@@ -56,93 +70,6 @@ def get_nounce(key):
     return key.rsplit('.', 1)[-1]
 
 
-class DiskFileManager(diskfile.DiskFileManager):
-
-    def __init__(self, conf, logger):
-        super(DiskFileManager, self).__init__(conf, logger)
-        self.connect_timeout = int(conf.get('connect_timeout', 3))
-        self.response_timeout = int(conf.get('response_timeout', 30))
-        self.connect_retry = int(conf.get('connect_retry', 3))
-        self.write_depth = int(conf.get('write_depth', DEFAULT_DEPTH))
-        self.read_depth = int(conf.get('read_depth', DEFAULT_DEPTH))
-        self.delete_depth = int(conf.get('delete_depth', DEFAULT_DEPTH))
-        raw_sync_option = conf.get('synchronization', 'writeback').lower()
-        try:
-            self.synchronization = SYNC_OPTION_MAP[raw_sync_option]
-        except KeyError:
-            raise ValueError('Invalid synchronization option, choices are %r' %
-                             SYNC_OPTION_MAP.keys())
-        self.conn_pool = {}
-        self.unlink_wait = \
-            server.config_true_value(conf.get('unlink_wait', 'false'))
-
-    def get_diskfile(self, device, partition, account, container, obj,
-                     policy_idx=0, **kwargs):
-        host, port = device.split(':')
-        return DiskFile(self, host, port, self.threadpools[device],
-                        partition, account, container, obj,
-                        policy_idx=policy_idx, unlink_wait=self.unlink_wait,
-                        **kwargs)
-
-    def get_diskfile_from_audit_location(self, device, head_key):
-        host, port = device.split(':')
-        policy_match = re.match('objects([-]?[0-9]?)\.', head_key)
-        policy_string = policy_match.group(1)
-        if not policy_string:
-            policy_index = 0
-        else:
-            policy_index = abs(int(policy_string))
-        datadir = head_key.split('.', 3)[1]
-        return DiskFile(self, host, port, self.threadpools[device], None,
-                        policy_idx=policy_index, _datadir=datadir,
-                        unlink_wait=self.unlink_wait)
-
-    def pickle_async_update(self, device, account, container, obj, data,
-                            timestamp, policy_idx):
-        host, port = device.split(':')
-        hashpath = diskfile.hash_path(account, container, obj)
-        key = async_key(policy_idx, hashpath, timestamp)
-        blob = msgpack.packb(data)
-        resp = self.get_connection(host, port).put(key, blob)
-        resp.wait()
-        self.logger.increment('async_pendings')
-
-    def _new_connection(self, host, port, **kwargs):
-        kwargs.setdefault('connect_timeout', self.connect_timeout)
-        kwargs.setdefault('response_timeout', self.response_timeout)
-        for i in range(1, self.connect_retry + 1):
-            try:
-                return KineticSwiftClient(self.logger, host, int(port),
-                                          **kwargs)
-            except Timeout:
-                self.logger.warning('Drive %s:%s connect timeout #%d (%ds)' % (
-                    host, port, i, self.connect_timeout))
-            except Exception:
-                self.logger.exception('Drive %s:%s connection error #%d' % (
-                    host, port, i))
-            if i < self.connect_retry:
-                sleep(1)
-        msg = 'Unable to connect to drive %s:%s after %s attempts' % (
-            host, port, i)
-        self.logger.error(msg)
-        raise diskfile.DiskFileDeviceUnavailable()
-
-    def get_connection(self, host, port, **kwargs):
-        key = (host, port)
-        conn = None
-        try:
-            conn = self.conn_pool[key]
-        except KeyError:
-            pass
-        if conn and conn.faulted:
-            conn.close()
-            conn = None
-        if not conn:
-            conn = self.conn_pool[key] = self._new_connection(
-                host, port, **kwargs)
-        return conn
-
-
 class DiskFileReader(diskfile.DiskFileReader):
 
     def __init__(self, diskfile):
@@ -182,17 +109,19 @@ class DiskFileReader(diskfile.DiskFileReader):
 
 class DiskFile(diskfile.DiskFile):
 
+    reader_cls = DiskFileReader
+
     def __init__(self, mgr, host, port, *args, **kwargs):
         self.unlink_wait = kwargs.pop('unlink_wait', False)
         device_path = ''
         self.disk_chunk_size = kwargs.pop('disk_chunk_size',
                                           mgr.disk_chunk_size)
-        self.policy_index = kwargs.get('policy_idx', 0)
         # this is normally setup in DiskFileWriter, but we do it here
         self._extension = '.data'
         # this is to neuter the context manager close in GET
         self._took_reader = False
         super(DiskFile, self).__init__(mgr, device_path, *args, **kwargs)
+        self.policy_index = int(self.policy)
         self.hashpath = os.path.basename(self._datadir.rstrip('/'))
         self._buffer = bytearray()
         self._nounce = None
@@ -200,10 +129,10 @@ class DiskFile(diskfile.DiskFile):
         self.upload_size = 0
         self.last_sync = 0
         # configurables
-        self.write_depth = self._mgr.write_depth
-        self.read_depth = self._mgr.read_depth
-        self.delete_depth = self._mgr.delete_depth
-        self.synchronization = self._mgr.synchronization
+        self.write_depth = self._manager.write_depth
+        self.read_depth = self._manager.read_depth
+        self.delete_depth = self._manager.delete_depth
+        self.synchronization = self._manager.synchronization
         self.conn = None
         self.conn = mgr.get_connection(host, port)
         self.logger = mgr.logger
@@ -268,6 +197,12 @@ class DiskFile(diskfile.DiskFile):
             yield self
         finally:
             self.close()
+
+    def commit(self, timestamp):
+        pass
+
+    def write_metadata(self, metadata):
+        raise NotImplementedError()
 
     def write(self, chunk):
         self._buffer.extend(chunk)
@@ -378,17 +313,114 @@ class DiskFile(diskfile.DiskFile):
         return self._metadata['Content-Length']
 
 
+class DiskFileManager(diskfile.DiskFileManager):
+
+    diskfile_cls = DiskFile
+
+    def __init__(self, conf, logger):
+        super(DiskFileManager, self).__init__(conf, logger)
+        self.connect_timeout = int(conf.get('connect_timeout', 3))
+        self.response_timeout = int(conf.get('response_timeout', 30))
+        self.connect_retry = int(conf.get('connect_retry', 3))
+        self.write_depth = int(conf.get('write_depth', DEFAULT_DEPTH))
+        self.read_depth = int(conf.get('read_depth', DEFAULT_DEPTH))
+        self.delete_depth = int(conf.get('delete_depth', DEFAULT_DEPTH))
+        raw_sync_option = conf.get('synchronization', 'writeback').lower()
+        try:
+            self.synchronization = SYNC_OPTION_MAP[raw_sync_option]
+        except KeyError:
+            raise ValueError('Invalid synchronization option, choices are %r' %
+                             SYNC_OPTION_MAP.keys())
+        self.conn_pool = {}
+        self.unlink_wait = \
+            server.config_true_value(conf.get('unlink_wait', 'false'))
+
+    def get_diskfile(self, device, partition, account, container, obj, policy,
+                     **kwargs):
+        host, port = device.split(':')
+        return DiskFile(self, host, port, self.threadpools[device],
+                        partition, account, container, obj, policy=policy,
+                        unlink_wait=self.unlink_wait,
+                        **kwargs)
+
+    def get_diskfile_from_audit_location(self, device, head_key):
+        host, port = device.split(':')
+        policy_match = re.match('objects([-]?[0-9]?)\.', head_key)
+        policy_string = policy_match.group(1)
+
+        try:
+            _, policy = split_policy_string(policy_string)
+        except PolicyError:
+            policy = POLICIES.legacy
+        datadir = head_key.split('.', 3)[1]
+        return DiskFile(self, host, port, self.threadpools[device], None,
+                        policy=policy, _datadir=datadir,
+                        unlink_wait=self.unlink_wait)
+
+    def pickle_async_update(self, device, account, container, obj, data,
+                            timestamp, policy_idx):
+        host, port = device.split(':')
+        hashpath = diskfile.hash_path(account, container, obj)
+        key = async_key(policy_idx, hashpath, timestamp)
+        blob = msgpack.packb(data)
+        resp = self.get_connection(host, port).put(key, blob)
+        resp.wait()
+        self.logger.increment('async_pendings')
+
+    def _new_connection(self, host, port, **kwargs):
+        kwargs.setdefault('connect_timeout', self.connect_timeout)
+        kwargs.setdefault('response_timeout', self.response_timeout)
+        for i in range(1, self.connect_retry + 1):
+            try:
+                return KineticSwiftClient(self.logger, host, int(port),
+                                          **kwargs)
+            except Timeout:
+                self.logger.warning('Drive %s:%s connect timeout #%d (%ds)' % (
+                    host, port, i, self.connect_timeout))
+            except Exception:
+                self.logger.exception('Drive %s:%s connection error #%d' % (
+                    host, port, i))
+            if i < self.connect_retry:
+                sleep(1)
+        msg = 'Unable to connect to drive %s:%s after %s attempts' % (
+            host, port, i)
+        self.logger.error(msg)
+        raise diskfile.DiskFileDeviceUnavailable()
+
+    def get_connection(self, host, port, **kwargs):
+        key = (host, port)
+        conn = None
+        try:
+            conn = self.conn_pool[key]
+        except KeyError:
+            pass
+        if conn and conn.faulted:
+            conn.close()
+            conn = None
+        if not conn:
+            conn = self.conn_pool[key] = self._new_connection(
+                host, port, **kwargs)
+        return conn
+
+
+def install_kinetic_diskfile():
+    diskfile.DiskFileRouter.policy_type_to_manager_cls.pop(
+        diskfile.REPL_POLICY, None)
+    diskfile.DiskFileRouter.register(
+        diskfile.REPL_POLICY)(DiskFileManager)
+
+
 class ObjectController(server.ObjectController):
 
     def setup(self, conf):
         super(ObjectController, self).setup(conf)
-        self._diskfile_mgr = DiskFileManager(conf, self.logger)
         kinetic_logger = logging.getLogger('kinetic')
         for handler in self.logger.logger.handlers:
             kinetic_logger.addHandler(handler)
 
 
 def app_factory(global_conf, **local_conf):
+    install_kinetic_diskfile()
     conf = global_conf.copy()
     conf.update(local_conf)
     return ObjectController(conf)

@@ -1,10 +1,10 @@
 Vagrant.configure("2") do |config|
   config.vm.hostname = "kinetic-swift"
-  config.vm.box = "kinetic-swift"
-  config.vm.box_url = "http://files.vagrantup.com/precise64.box"
-  config.vm.network :private_network, ip: "192.168.9.90"
+  config.vm.box = "ubuntu/trusty64"
+  config.vm.network :private_network, ip: "192.168.23.230"
   config.vm.provider :virtualbox do |vb|
     vb.name = "kinetic-swift-%d" % Time.now
+    vb.memory = 1024
   end
   config.vm.provision :chef_solo do |chef|
     chef.add_recipe "swift"

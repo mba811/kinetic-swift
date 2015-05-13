@@ -7,7 +7,7 @@ with open('requirements.txt', 'r') as f:
 
 setup(
     name='kinetic-swift',
-    version='0.1',
+    version='0.2.0.dev',
     description='Kinetic Plugin for Swift',
     author='SwiftStack/Seagate',
     packages=find_packages(),

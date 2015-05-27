@@ -178,7 +178,7 @@ class KineticReplicator(ObjectReplicator):
         for policy in POLICIES:
             obj_ring = self.load_object_ring(policy)
             devices = override_devices or [d['device'] for d in
-                                           obj_ring.devs]
+                                           obj_ring.devs if d]
             self.logger.debug(_("Begin replication for %r"), policy)
             try:
                 self._replicate(*devices, policy=policy)

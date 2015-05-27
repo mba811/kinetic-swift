@@ -27,7 +27,7 @@ class KineticAuditor(ObjectAuditor):
             self.conf.get('files_per_second', 20))
         self.max_bytes_per_second = float(
             self.conf.get('bytes_per_second', 10000000))
-        self.interval = 30    
+        self.interval = 30
 
     def reset_stats(self):
         self.stats = defaultdict(int)
@@ -59,6 +59,7 @@ class KineticAuditor(ObjectAuditor):
         return set([
             d['device'] for policy in POLICIES for d in
             POLICIES.get_object_ring(int(policy), self.swift_dir).devs
+            if d
         ])
 
     def _find_objects(self, device):

@@ -46,6 +46,7 @@ class KineticUpdater(ObjectUpdater):
         return set([
             d['device'] for policy in POLICIES for d in
             POLICIES.get_object_ring(int(policy), self.swift_dir).devs
+            if d
         ])
 
     def run_once(self, *args, **kwargs):

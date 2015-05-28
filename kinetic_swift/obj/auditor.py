@@ -12,7 +12,7 @@ from swift.common.storage_policy import POLICIES
 from swift.common.utils import parse_options, list_from_csv
 from swift.obj.auditor import ObjectAuditor, dump_recon_cache, ratelimit_sleep
 from swift import gettext_ as _
-
+from swift.obj.diskfile import DiskFileNotExist, DiskFileDeleted
 from kinetic_swift.obj.server import DiskFileManager
 
 
@@ -74,32 +74,43 @@ class KineticAuditor(ObjectAuditor):
             device, head_key)
         etag = hashlib.md5()
         size = 0
-        with df.open():
-            metadata = df.get_metadata()
-            for chunk in df:
-                chunk_len = len(chunk)
-                etag.update(chunk)
-                size += chunk_len
-                self.bytes_running_time = ratelimit_sleep(
-                    self.bytes_running_time,
-                    self.max_bytes_per_second,
-                    incr_by=chunk_len)
-                self.bytes_processed += chunk_len
-                self.total_bytes_processed += chunk_len
-            if size != int(metadata.get('Content-Length')):
-                self.logger.warning(
-                    'found object %r with size %r instead of %r',
-                    head_key, size, metadata.get('Content-Length'))
-                df.quarantine()
-                return False
-            got_etag = etag.hexdigest()
-            expected_etag = metadata.get('ETag')
-            if got_etag != expected_etag:
-                self.logger.warning(
-                    'found object %r with etag %r instead of %r',
-                    head_key, got_etag, expected_etag)
-                df.quarantine()
-                return False
+        try:
+            f = df.open():
+        except DiskFileNotExist:
+            self.logger.warning(
+                'object %r does not exist', head_key)                
+            return False
+        except DiskFileDeleted:
+            self.logger.warning(
+                'object %r has been deleted', head_key)    
+            return False
+        else:
+            with f:
+                metadata = df.get_metadata()
+                for chunk in df:
+                    chunk_len = len(chunk)
+                    etag.update(chunk)
+                    size += chunk_len
+                    self.bytes_running_time = ratelimit_sleep(
+                        self.bytes_running_time,
+                        self.max_bytes_per_second,
+                        incr_by=chunk_len)
+                    self.bytes_processed += chunk_len
+                    self.total_bytes_processed += chunk_len
+                if size != int(metadata.get('Content-Length')):
+                    self.logger.warning(
+                        'found object %r with size %r instead of %r',
+                        head_key, size, metadata.get('Content-Length'))
+                    df.quarantine()
+                    return False
+                got_etag = etag.hexdigest()
+                expected_etag = metadata.get('ETag')
+                if got_etag != expected_etag:
+                    self.logger.warning(
+                        'found object %r with etag %r instead of %r',
+                        head_key, got_etag, expected_etag)
+                    df.quarantine()
+                    return False
         return True
 
     def run_once(self, *args, **kwargs):

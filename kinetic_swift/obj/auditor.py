@@ -1,4 +1,17 @@
 #!/usr/bin/env python
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#    http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or
+# implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 from collections import defaultdict
 import hashlib
 import random
@@ -72,19 +85,14 @@ class KineticAuditor(ObjectAuditor):
     def _audit_object(self, device, head_key):
         df = self.mgr.get_diskfile_from_audit_location(
             device, head_key)
-        etag = hashlib.md5()
-        size = 0
         try:
             f = df.open()
         except DiskFileNotExist:
-            self.logger.warning(
-                'object %r does not exist', head_key)                
-            return False
-        except DiskFileDeleted:
-            self.logger.warning(
-                'object %r has been deleted', head_key)    
-            return False
+            self.logger.debug(
+                'object %r does not exist', head_key)
         else:
+            etag = hashlib.md5()
+            size = 0
             with f:
                 metadata = df.get_metadata()
                 for chunk in df:

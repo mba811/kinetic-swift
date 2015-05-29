@@ -69,6 +69,31 @@ class TestKineticObjectAuditor(KineticSwiftTestCase):
         for k, v in expected.items():
             self.assertEqual(v, metadata[k])
 
+    def test_delete_and_audit(self):
+        df = self.auditor.mgr.get_diskfile(self.device, '0', 'a', 'c',
+                                           self.buildKey('o'), self.policy)
+        body = 'awesome'
+        with df.create() as writer:
+            writer.write(body)
+            etag = hashlib.md5(body).hexdigest()
+            writer.put({'X-Timestamp': time.time(),
+                        'ETag': etag,
+                        'Content-Length': len(body)})
+
+        df.delete(time.time())
+
+        with mock.patch('time.sleep', lambda x: None):
+            self.auditor.run_once(devices=self.device)
+
+        self.assertEqual(self.auditor.stats, {
+            'found_objects': 1,
+            'success': 1,
+        })
+
+        self.assertRaises(auditor.DiskFileDeleted, df.open)
+        self.assertTrue('does not exist' in
+                        self.auditor.logger.get_lines_for_level('debug')[0])
+
     def test_missing_chunk_key(self):
         df = self.auditor.mgr.get_diskfile(self.device, '0', 'a', 'c',
                                            self.buildKey('o'), self.policy)

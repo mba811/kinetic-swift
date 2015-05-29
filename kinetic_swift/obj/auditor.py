@@ -75,7 +75,7 @@ class KineticAuditor(ObjectAuditor):
         etag = hashlib.md5()
         size = 0
         try:
-            f = df.open():
+            f = df.open()
         except DiskFileNotExist:
             self.logger.warning(
                 'object %r does not exist', head_key)                

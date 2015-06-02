@@ -139,10 +139,14 @@ execute "pbr-pip-depends" do
     "&& apt-get purge python-setuptools -y"
 end
 
+execute "fix-pbr-testtools-version-depends" do
+  command "pip install --upgrade testtools"
+end
+
 execute "python-swiftclient-install" do
   cwd "/vagrant/python-swiftclient"
   command "pip install -e . && pip install -r test-requirements.txt"
-  creates "/usr/local/lib/python2.7/dist-packages/python-swiftclient.egg-link"
+  # creates "/usr/local/lib/python2.7/dist-packages/python-swiftclient.egg-link"
   action :run
 end
 

@@ -72,16 +72,6 @@ end
 
 KINETIC_JAR="/vagrant/kinetic-java/kinetic-simulator/target/kinetic-simulator-0.8.0.3-SNAPSHOT-jar-with-dependencies.jar"
 
-execute "sync-kinetic-proto" do
-  cwd "/vagrant/kinetic-java"
-  command "./bin/syncProtoFromRepo.sh"
-end
-
-execute "build-kinetic-proto" do
-  cwd "/vagrant/kinetic-java"
-  command "./bin/buildProto.sh"
-end
-
 execute "mvn-package" do
   cwd "/vagrant/kinetic-java"
   command "mvn clean package -DSkipTests"

@@ -4,9 +4,17 @@ hardstatus alwayslastline
 hardstatus string "%{= g} %{= w}%-w%{=r}%n %t%{-}%+W"
 screen -t simulator-8010 bash
 stuff "java -jar $KINETIC_JAR 8010 /srv/node1/sdb1/kinetic 8410"
+screen -t simulator-8011 bash
+stuff "java -jar $KINETIC_JAR 8011 /srv/node1/sdb5/kinetic 8411"
 screen -t simulator-8020 bash
 stuff "java -jar $KINETIC_JAR 8020 /srv/node2/sdb2/kinetic 8420"
+screen -t simulator-8021 bash
+stuff "java -jar $KINETIC_JAR 8021 /srv/node2/sdb6/kinetic 8421"
 screen -t simulator-8030 bash
 stuff "java -jar $KINETIC_JAR 8030 /srv/node3/sdb3/kinetic 8430"
+screen -t simulator-8031 bash
+stuff "java -jar $KINETIC_JAR 8031 /srv/node3/sdb7/kinetic 8431"
 screen -t simulator-8040 bash
 stuff "java -jar $KINETIC_JAR 8040 /srv/node4/sdb4/kinetic 8440"
+screen -t simulator-8041 bash
+stuff "java -jar $KINETIC_JAR 8041 /srv/node4/sdb8/kinetic 8441"

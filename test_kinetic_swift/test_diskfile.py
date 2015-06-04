@@ -33,9 +33,20 @@ class TestDiskFile(KineticSwiftTestCase):
         self.logger = debug_logger('test-kinetic')
         server.install_kinetic_diskfile()
         self.policy = random.choice(list(server.diskfile.POLICIES))
-        self.mgr = server.diskfile.DiskFileRouter(
-            {}, self.logger)[self.policy]
+        print self.policy.policy_type
+        self.router = server.diskfile.DiskFileRouter(
+            {}, self.logger)
+        self.mgr = self.router[self.policy]
         self.mgr.unlink_wait = True
+
+    def test_diskfile_router(self):
+        expected = {
+            server.diskfile.EC_POLICY: server.ECDiskFileManager,
+            server.diskfile.REPL_POLICY: server.DiskFileManager,
+        }
+        for policy in server.diskfile.POLICIES:
+            self.assertIsInstance(self.router[policy],
+                                  expected[policy.policy_type])
 
     def test_manager_config(self):
         conf = {

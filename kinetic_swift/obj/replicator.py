@@ -23,7 +23,7 @@ from swift.common.utils import parse_options
 from swift.common.daemon import run_daemon
 from swift.obj.replicator import ObjectReplicator
 from swift import gettext_ as _
-from swift.common.storage_policy import POLICIES
+from swift.common.storage_policy import POLICIES, EC_POLICY
 
 from kinetic_swift.client import KineticSwiftClient
 from kinetic_swift.obj.server import object_key, install_kinetic_diskfile
@@ -176,6 +176,8 @@ class KineticReplicator(ObjectReplicator):
         self.last_replication_count = -1
         self.partition_times = []
         for policy in POLICIES:
+            if policy.policy_type == EC_POLICY:
+                continue
             obj_ring = self.load_object_ring(policy)
             devices = override_devices or [d['device'] for d in
                                            obj_ring.devs if d]

@@ -64,21 +64,21 @@ execute "mount" do
 end
 
 (1..4).each do |i|
-  disk_path = "/mnt/swift-disk/sdb#{i}"
-  node_path = "/srv/node#{i}"
-  srv_path = node_path + "/sdb#{i}"
-  directory disk_path do
-    owner "vagrant"
-    group "vagrant"
-    action :create
-  end
-  directory node_path do
-    owner "vagrant"
-    group "vagrant"
-    action :create
-  end
-  link srv_path do
-    to disk_path 
+  [i, i + 4].each do |d|
+    dev = "sdb#{d}"
+    disk_path = "/mnt/swift-disk/#{dev}"
+    node_path = "/srv/node#{i}"
+    srv_path = node_path + "/#{dev}"
+    [disk_path, node_path].each do |path|
+      directory path do
+        owner "vagrant"
+        group "vagrant"
+        action :create
+      end
+    end
+    link srv_path do
+      to disk_path
+    end
   end
 end
 
@@ -244,19 +244,41 @@ end
 
 # rings
 
-["object", "container", "account"].each_with_index do |server, p|
+ring_settings = {
+  "account" => {
+    "replicas" => 3,
+    "port" => 2,
+  },
+  "container" => {
+    "replicas" => 3,
+    "port" => 1,
+  },
+  "object" => {
+    "replicas" => 3,
+    "port" => 0,
+  },
+  "object-1" => {
+    "replicas" => 6,
+    "port" => 0,
+  },
+}
+ring_settings.each do |server, info|
   execute "#{server}.builder-create" do
-    command "sudo -u vagrant swift-ring-builder #{server}.builder create 10 3 1"
+    command "sudo -u vagrant swift-ring-builder #{server}.builder create " \
+      "10 #{info["replicas"]} 1"
     creates "/etc/swift/#{server}.builder"
     cwd "/etc/swift"
   end
   (1..4).each do |i|
-    execute "#{server}.builder-add-sdb#{i}" do
-      command "sudo -u vagrant swift-ring-builder #{server}.builder add " \
-        "r1z#{i}-127.0.0.1:60#{i}#{p}/sdb#{i} 1 && " \
-        "rm -f /etc/swift/#{server}.ring.gz || true"
-      not_if "swift-ring-builder /etc/swift/#{server}.builder search /sdb#{i}"
-      cwd "/etc/swift"
+    [i, i + 4].each do |d|
+      dev = "sdb#{d}"
+      execute "#{server}.builder-add-#{dev}" do
+        command "sudo -u vagrant swift-ring-builder #{server}.builder add " \
+          "r1z#{i}-127.0.0.1:60#{i}#{info["port"]}/#{dev} 1 && " \
+          "rm -f /etc/swift/#{server}.ring.gz || true"
+        not_if "swift-ring-builder /etc/swift/#{server}.builder search /#{dev}"
+        cwd "/etc/swift"
+      end
     end
   end
   execute "#{server}.builder-rebalance" do

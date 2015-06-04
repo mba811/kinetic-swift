@@ -403,11 +403,20 @@ class DiskFileManager(diskfile.DiskFileManager):
         return conn
 
 
+class ECDiskFileManager(DiskFileManager):
+    pass
+
+
 def install_kinetic_diskfile():
-    diskfile.DiskFileRouter.policy_type_to_manager_cls.pop(
-        diskfile.REPL_POLICY, None)
-    diskfile.DiskFileRouter.register(
-        diskfile.REPL_POLICY)(DiskFileManager)
+    kinetic_manager_map = {
+        diskfile.REPL_POLICY: DiskFileManager,
+        diskfile.EC_POLICY: ECDiskFileManager,
+    }
+    for policy_type, manager_class in kinetic_manager_map.items():
+        diskfile.DiskFileRouter.policy_type_to_manager_cls.pop(
+            policy_type, None)
+        diskfile.DiskFileRouter.register(
+            policy_type)(manager_class)
 
 
 class ObjectController(server.ObjectController):

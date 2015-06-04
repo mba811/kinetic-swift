@@ -67,7 +67,7 @@ def teardown_simulators(sim_map):
         proc.wait()
 
 
-@patch_policies
+@patch_policies(with_ec_default=True)
 class KineticSwiftTestCase(unittest.TestCase):
 
     PORTS = (9123,)

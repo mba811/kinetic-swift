@@ -171,23 +171,34 @@ execute "simulator-start" do
   action :run
 end
 
-# kinetic ring
+# kinetic rings
 
-execute "kinetic.builder-create" do
-  command "sudo -u vagrant swift-ring-builder kinetic.builder create 10 3 1"
-  creates "/etc/swift/kinetic.builder"
-  cwd "/etc/swift"
+builders = {
+  "kinetic.builder" => 3,
+  "kinetic-1.builder" => 6,
+}
+
+builders.each do |builder, replicas|
+  execute "#{builder}-create" do
+    cwd "/etc/swift"
+    command "sudo -u vagrant swift-ring-builder #{builder} create 10 #{replicas} 1"
+    creates "/etc/swift/#{builder}"
+  end
 end
 
 (1..4).each do |i|
-  execute "kinetic-builder-add-80#{i}0" do
-    command "sudo -u vagrant swift-ring-builder kinetic.builder add " \
-      "--region 1 --zone 1 --ip 127.0.0.1 --replication-ip 127.0.0.1 " \
-      "--port 60#{i}0 --replication-port 60#{i}0 --weight 1 " \
-      "--device 127.0.0.1:80#{i}0"
-      not_if "swift-ring-builder /etc/swift/kinetic.builder search " \
-        "/127.0.0.1:80#{i}0"
-      cwd "/etc/swift"
+  builders.keys.each do |builder|
+    (0..1).each do |k|
+      execute "#{builder}-add-80#{i}#{k}" do
+        command "sudo -u vagrant swift-ring-builder #{builder} add " \
+          "--region 1 --zone 1 --ip 127.0.0.1 --replication-ip 127.0.0.1 " \
+          "--port 60#{i}0 --replication-port 60#{i}0 --weight 1 " \
+          "--device 127.0.0.1:80#{i}#{k}"
+          not_if "swift-ring-builder /etc/swift/#{builder} search " \
+            "/127.0.0.1:80#{i}#{k}"
+          cwd "/etc/swift"
+      end
+    end
   end
   directory "/etc/swift/object-server/#{i}.conf.d" do
     owner "vagrant"
@@ -207,17 +218,23 @@ cookbook_file "/etc/swift/kinetic.conf" do
   group "vagrant"
 end
 
-execute "kinetic.builder-rebalance" do
-  command "sudo -u vagrant swift-ring-builder kinetic.builder rebalance"
-  creates "/etc/swift/kinetic.ring.gz"
-  cwd "/etc/swift"
+builders.keys.each do |builder|
+  ring = builder.split(".")[0] + ".ring.gz"
+  execute "#{builder}-rebalance" do
+    command "sudo -u vagrant swift-ring-builder #{builder} rebalance"
+    returns [0, 1]
+    creates "/etc/swift/#{ring}"
+    cwd "/etc/swift"
+  end
+
+  execute "#{ring}-symlink" do
+    object_ring = ring.sub("kinetic", "object")
+    command "rm #{object_ring} ; sudo -u vagrant ln -s #{ring} #{object_ring}"
+    not_if "readlink #{object_ring}"
+    cwd "/etc/swift"
+  end
 end
 
-execute "kinetic.ring.gz-symlink" do
-  command "rm object.ring.gz ; sudo -u vagrant ln -s kinetic.ring.gz object.ring.gz"
-  not_if "readlink object.ring.gz"
-  cwd "/etc/swift"
-end
 
 execute "kinetic-object-start" do
   command "sudo -i -u vagrant swift-init object start"

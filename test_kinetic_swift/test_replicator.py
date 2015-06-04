@@ -62,6 +62,7 @@ def create_rings(data_dir, *ports):
             pickle.dump(ring_data, f)
 
 
+@utils.patch_policies(with_ec_default=False)
 class TestKineticReplicator(utils.KineticSwiftTestCase):
 
     REPLICATION_MODE = 'push'

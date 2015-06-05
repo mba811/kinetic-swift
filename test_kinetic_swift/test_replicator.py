@@ -71,9 +71,12 @@ class TestKineticReplicator(utils.KineticSwiftTestCase):
     def setUp(self):
         super(TestKineticReplicator, self).setUp()
         create_rings(self.test_dir, *self.ports)
+        recon_cache_path = os.path.join(self.test_dir, 'recon_cache')
+        os.makedirs(recon_cache_path)
         conf = {
             'swift_dir': self.test_dir,
             'kinetic_replication_mode': self.REPLICATION_MODE,
+            'recon_cache_path': recon_cache_path,
         }
         self.daemon = replicator.KineticReplicator(conf)
         # force ring reload
@@ -86,18 +89,21 @@ class TestKineticReplicator(utils.KineticSwiftTestCase):
         self.policy = random.choice(list(server.diskfile.POLICIES))
         self.mgr = self._df_router[self.policy]
 
-    def put_object(self, device, object_name, body='', timestamp=None):
+    def put_object(self, device, object_name, body='', timestamp=None,
+                   policy=None):
+        policy = policy or self.policy
         df = self.mgr.get_diskfile(device, '0', 'a', 'c', object_name,
-                                   policy=self.policy)
+                                   policy=policy)
         metadata = {'X-Timestamp': timestamp or time.time()}
         with df.create() as writer:
             writer.write(body)
             writer.put(metadata)
         return metadata, body
 
-    def get_object(self, device, object_name):
+    def get_object(self, device, object_name, policy=None):
+        policy = policy or self.policy
         df = self.mgr.get_diskfile(device, '0', 'a', 'c', object_name,
-                                   policy=self.policy)
+                                   policy=policy)
         with df.open() as reader:
             metadata = reader.get_metadata()
             body = ''.join(reader)
@@ -115,8 +121,59 @@ class TestKineticReplicator(utils.KineticSwiftTestCase):
             resp = client.getKeyRange('chunks.', 'objects/')
             self.assertEquals(resp.wait(), [])
 
-    def test_replicate_all(self):
-        self.daemon.replicate()
+    def test_replicate_all_policies(self):
+        self.daemon.run_once()
+        found_storage_policies = set()
+        for msg in self.daemon.logger.get_lines_for_level('debug'):
+            if 'begin replication' not in msg.lower():
+                continue
+            for policy in storage_policy.POLICIES:
+                if str(policy) in msg:
+                    found_storage_policies.add(policy)
+        self.assertEqual(found_storage_policies, set(storage_policy.POLICIES))
+
+    @utils.patch_policies(with_ec_default=True)
+    def test_do_not_replicate_ec_policy(self):
+        for policy in server.diskfile.POLICIES:
+            if policy.policy_type != storage_policy.EC_POLICY:
+                policy.object_ring = None
+                self.daemon.load_object_ring(policy)
+        self.daemon.run_once()
+        found_storage_policies = set()
+        for msg in self.daemon.logger.get_lines_for_level('debug'):
+            if 'begin replication' not in msg.lower():
+                continue
+            for policy in storage_policy.POLICIES:
+                if str(policy) in msg:
+                    found_storage_policies.add(policy)
+        self.assertEqual(found_storage_policies, set([
+            p for p in storage_policy.POLICIES
+            if p.policy_type != storage_policy.EC_POLICY
+        ]))
+
+    def test_do_not_replicate_other_policy(self):
+        other_policy = random.choice([
+            p for p in storage_policy.POLICIES
+            if p != self.policy])
+        # put an object in the "other" policy
+        other_dev = random.choice(other_policy.object_ring.devs)
+        self.put_object(other_dev['device'], 'obj1', policy=other_policy)
+        # run replication
+        self.daemon.run_once()
+        # make sure no copies found their way into our policy
+        for dev in self.policy.object_ring.devs:
+            self.assertRaises(server.diskfile.DiskFileNotExist,
+                              self.get_object, dev['device'], 'obj1',
+                              policy=self.policy)
+        # and now we should have all three in other policy
+        replicas = 0
+        for dev in self.policy.object_ring.devs:
+            try:
+                self.get_object(dev['device'], 'obj1', policy=other_policy)
+            except server.diskfile.DiskFileNotExist:
+                continue
+            replicas += 1
+        self.assertEqual(other_policy.object_ring.replica_count, replicas)
 
     def test_replicate_one_object(self):
         source_port = self.ports[0]
@@ -134,6 +191,8 @@ class TestKineticReplicator(utils.KineticSwiftTestCase):
         source_keys = source_resp.wait()
         target_keys = target_resp.wait()
         self.assertEquals(source_keys, target_keys)
+        self.assertEqual(len(self.daemon._conn_pool),
+                         self.policy.object_ring.replica_count)
 
     def test_replicate_to_right_servers(self):
         source_device = '127.0.0.1:%s' % self.ports[0]

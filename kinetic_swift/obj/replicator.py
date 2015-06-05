@@ -23,7 +23,7 @@ from swift.common.utils import parse_options
 from swift.common.daemon import run_daemon
 from swift.obj.replicator import ObjectReplicator
 from swift import gettext_ as _
-from swift.common.storage_policy import POLICIES, EC_POLICY
+from swift.common.storage_policy import POLICIES, EC_POLICY, get_policy_string
 
 from kinetic_swift.client import KineticSwiftClient
 from kinetic_swift.obj.server import object_key, install_kinetic_diskfile
@@ -55,12 +55,22 @@ class KineticReplicator(ObjectReplicator):
         self.replication_mode = conf.get('kinetic_replication_mode', 'push')
         self.connect_timeout = int(conf.get('connect_timeout', 3))
         self.response_timeout = int(conf.get('response_timeout', 30))
+        # device => [last_used, conn]
+        self._conn_pool = {}
+        self.max_connections = 10
 
-    def iter_all_objects(self, conn):
-        keys = conn.getKeyRange('objects,', 'objects/')
-        for key in keys.wait():
-            # FIXME: clean up hashdir and old tombstones
-            yield key
+    def iter_all_objects(self, conn, policy):
+        prefix = get_policy_string('objects', policy)
+        key_range = [prefix + term for term in (',', '/')]
+        keys = conn.getKeyRange(*key_range).wait()
+        while keys:
+            for key in keys:
+                # TODO: clean up hashdir and old tombstones
+                yield key
+            # see if there's any more values
+            key_range[0] = key
+            keys = conn.getKeyRange(*key_range,
+                                    startKeyInclusive=False).wait()
 
     def find_target_devices(self, key, policy):
         key_info = split_key(key)
@@ -103,6 +113,30 @@ class KineticReplicator(ObjectReplicator):
         return True
 
     def get_conn(self, device):
+        now = time.time()
+        try:
+            pool_entry = self._conn_pool[device]
+        except KeyError:
+            self.logger.debug('Creating new connection to %r', device)
+            self._close_old_connections()
+            conn = self._get_conn(device)
+        else:
+            conn = pool_entry[1]
+        self._conn_pool[device] = (now, conn)
+        return conn
+
+    def _close_old_connections(self):
+        oldest_keys = sorted(self._conn_pool, key=lambda k:
+                             self._conn_pool[k][0])
+        while len(self._conn_pool) > self.max_connections:
+            device = oldest_keys.pop(0)
+            pool_entry = self._conn_pool.pop(device)
+            last_used, conn = pool_entry
+            self.logger.debug('Closing old connection to %r (%s)', device,
+                              time.time() - last_used)
+            conn.close()
+
+    def _get_conn(self, device):
         host, port = device.split(':')
         conn = KineticSwiftClient(
             self.logger, host, int(port),
@@ -137,7 +171,7 @@ class KineticReplicator(ObjectReplicator):
 
     def replicate_device(self, device, conn, policy):
         self.logger.info('begining replication pass for %r', device)
-        for key in self.iter_all_objects(conn):
+        for key in self.iter_all_objects(conn, policy):
             # might be a good place to collect jobs and group by
             # partition and/or target
             targets = list(self.find_target_devices(key, policy))
@@ -156,7 +190,12 @@ class KineticReplicator(ObjectReplicator):
         for device in devices:
             try:
                 # might be a good place to go multiprocess
-                conn = self.get_conn(device)
+                try:
+                    conn = self.get_conn(device)
+                except:
+                    self.logger.exception(
+                        'Unable to connect to device: %r', device)
+                    continue
                 try:
                     self.replicate_device(device, conn, policy)
                 except socket.error as e:
@@ -187,7 +226,7 @@ class KineticReplicator(ObjectReplicator):
             except Exception:
                 self.logger.exception(
                     _("Exception in top-level replication loop"))
-        self.logger.info('replication cycle for %r complete', devices)
+            self.logger.info('replication cycle for %r complete', devices)
 
 
 def main():

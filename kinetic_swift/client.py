@@ -1,3 +1,4 @@
+from contextlib import closing
 from collections import deque
 import errno
 from eventlet import Timeout, spawn_n, event
@@ -152,10 +153,11 @@ class KineticSwiftClient(object):
         def write_entry(entry):
             target.put(entry.key, entry.value, force=True)
 
-        for key in keys:
-            self.conn.getAsync(write_entry, self.raise_err, key)
-        self.conn.wait()
-        target.conn.wait()
+        with closing(target):
+            for key in keys:
+                self.conn.getAsync(write_entry, self.raise_err, key)
+            self.conn.wait()
+            target.conn.wait()
 
     def delete_keys(self, keys, depth=16):
         # self.log_info('delete_keys')

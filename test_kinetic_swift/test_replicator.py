@@ -160,6 +160,16 @@ class TestKineticReplicator(utils.KineticSwiftTestCase):
             resp = client.getKeyRange('chunks.', 'objects/')
             self.assertEquals(resp.wait(), [])
 
+    def test_iter_all_objects(self):
+        port = self.ports[0]
+        dev = '127.0.0.1:%s' % port
+        for policy in server.diskfile.POLICIES:
+            self.put_object(dev, 'obj1', policy=policy)
+        conn = self.client_map[port]
+        for policy in server.diskfile.POLICIES:
+            keys = list(self.daemon.iter_all_objects(conn, policy))
+            self.assertEqual(1, len(keys))
+
     def test_replicate_all_policies(self):
         self.daemon.run_once()
         found_storage_policies = set()
@@ -222,7 +232,7 @@ class TestKineticReplicator(utils.KineticSwiftTestCase):
         target_device = '127.0.0.1:%s' % target_port
         target_client = self.client_map[target_port]
         expected = self.put_object(source_device, 'obj1')
-        self.daemon._replicate(source_device)
+        self.daemon._replicate(source_device, policy=self.policy)
         result = self.get_object(target_device, 'obj1')
         self.assertEquals(expected, result)
         source_resp = source_client.getKeyRange('chunks.', 'objects/')
@@ -241,7 +251,7 @@ class TestKineticReplicator(utils.KineticSwiftTestCase):
         other_device = '127.0.0.1:%s' % other_port
 
         expected = self.put_object(source_device, 'obj1')
-        self.daemon._replicate(source_device)
+        self.daemon._replicate(source_device, policy=self.policy)
         result = self.get_object(target_device, 'obj1')
         self.assertEquals(expected, result)
         self.assertRaises(server.diskfile.DiskFileNotExist, self.get_object,
@@ -255,7 +265,7 @@ class TestKineticReplicator(utils.KineticSwiftTestCase):
         object_size = 2 ** 20
         body = '\x00' * object_size
         expected = self.put_object(source_device, 'random_object', body=body)
-        self.daemon._replicate(source_device)
+        self.daemon._replicate(source_device, policy=self.policy)
         result = self.get_object(target_device, 'random_object')
         self.assertEquals(result, expected)
 
@@ -294,7 +304,7 @@ class TestKineticReplicator(utils.KineticSwiftTestCase):
                                 target_key_info['nonce'])
         original_key_count = len(source_keys)
         # perform replication, should more or less no-op
-        self.daemon._replicate(source_device)
+        self.daemon._replicate(source_device, policy=self.policy)
         source_resp = source_client.getKeyRange('chunks.', 'objects/')
         source_keys = source_resp.wait()
         target_resp = target_client.getKeyRange('chunks.', 'objects/')
@@ -322,7 +332,7 @@ class TestKineticReplicator(utils.KineticSwiftTestCase):
         # put a copy on the handoff
         expected = self.put_object(other_device, 'obj1')
         # replicate to other servers
-        self.daemon._replicate(other_device)
+        self.daemon.run_once()
         result = self.get_object(source_device, 'obj1')
         self.assertEquals(expected, result)
         result = self.get_object(target_device, 'obj1')
@@ -347,7 +357,7 @@ class TestKineticReplicator(utils.KineticSwiftTestCase):
         expected = self.put_object(other_device, 'obj1',
                                    timestamp=ts.next().internal)
         # replicate to other servers
-        self.daemon._replicate(other_device)
+        self.daemon._replicate(other_device, policy=self.policy)
         result = self.get_object(source_device, 'obj1')
         self.assertEquals(expected, result)
         result = self.get_object(target_device, 'obj1')

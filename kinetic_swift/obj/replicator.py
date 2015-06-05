@@ -58,7 +58,7 @@ class KineticReplicator(ObjectReplicator):
 
     def iter_all_objects(self, conn, policy):
         prefix = get_policy_string('objects', policy)
-        key_range = [prefix + term for term in (',', '/')]
+        key_range = [prefix + term for term in ('.', '/')]
         keys = conn.getKeyRange(*key_range).wait()
         while keys:
             for key in keys:

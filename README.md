@@ -8,4 +8,4 @@ Getting Started
  1. `echo "awesome" > test`
  1. `swift upload mycontainer test`
  1. `swift download mycontainer test -o -`
- 1. `for i in {1..4}; do kineticc -P 80${i}0 list objects; done`
+ 1. `for p in 10 11 20 21 30 31 40 41; do kineticc -P 80${p} list objects; done`

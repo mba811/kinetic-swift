@@ -23,7 +23,8 @@ from swift.common.utils import parse_options
 from swift.common.daemon import run_daemon
 from swift.obj.replicator import ObjectReplicator
 from swift import gettext_ as _
-from swift.common.storage_policy import POLICIES, EC_POLICY, get_policy_string
+from swift.common.storage_policy import (
+    POLICIES, EC_POLICY, get_policy_string, split_policy_string)
 
 from kinetic_swift.client import KineticSwiftClient
 from kinetic_swift.obj.server import object_key, install_kinetic_diskfile
@@ -31,19 +32,14 @@ from kinetic_swift.obj.server import object_key, install_kinetic_diskfile
 
 def split_key(key):
     parts = key.split('.')
-    # TODO: use storage_policy.split_policy_string
-    storage_policy = parts[0]
-    if '-' in storage_policy:
-        base, policy_index = storage_policy.split('-', 1)
-    else:
-        policy_index = 0
+    _base, policy = split_policy_string(parts[0])
     hashpath = parts[1]
     timestamp = '.'.join(parts[2:4])
-    nounce = parts[-1]
+    nonce = parts[-1]
     return {
-        'policy_index': policy_index,
+        'policy': policy,
         'hashpath': hashpath,
-        'nounce': nounce,
+        'nonce': nonce,
         'timestamp': timestamp,
     }
 
@@ -85,7 +81,7 @@ class KineticReplicator(ObjectReplicator):
     def iter_object_keys(self, conn, key):
         yield key
         key_info = split_key(key)
-        chunk_key = 'chunks.%(hashpath)s.%(nounce)s' % key_info
+        chunk_key = 'chunks.%(hashpath)s.%(nonce)s' % key_info
         resp = conn.getKeyRange(chunk_key + '.', chunk_key + '/')
         for key in resp.wait():
             yield key
@@ -99,11 +95,10 @@ class KineticReplicator(ObjectReplicator):
     def is_object_on_target(self, target, key):
         # get key ready for getPrevious on target
         key_info = split_key(key)
-        key = object_key(key_info['policy_index'], key_info['hashpath'])
+        key = object_key(key_info['policy'], key_info['hashpath'])
 
         conn = self.get_conn(target)
         entry = conn.getPrevious(key).wait()
-        target_key_info = split_key
         if not entry:
             return False
         target_key_info = split_key(entry.key)

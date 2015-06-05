@@ -196,13 +196,13 @@ class TestKineticObjectAuditor(KineticSwiftTestCase):
 
         # check quarantine keys
         with df.open():
-            nounce = df._nounce
+            nonce = df._nonce
             df.quarantine()
 
         start_key = 'quarantine'
         end_key = start_key + '/'
         keys = [k for k in self.client.getKeyRange(start_key, end_key).wait()
-                if nounce in k]
+                if nonce in k]
         self.assertEqual(len(keys), num_chunks + 1)
 
         chunk_keys = [k for k in keys if 'chunk' in k]
@@ -222,7 +222,7 @@ class TestKineticObjectAuditor(KineticSwiftTestCase):
             'Content-Length': str(num_chunks * chunk_size),
             'ETag': etag.hexdigest(),
             'X-Kinetic-Chunk-Count': num_chunks,
-            'X-Kinetic-Chunk-Nounce': nounce,
+            'X-Kinetic-Chunk-Nonce': nonce,
             'X-Timestamp': put_timestamp.internal,
             'name': '/a/c/%s' % self.buildKey('o'),
         }

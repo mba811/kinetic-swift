@@ -18,8 +18,10 @@ import itertools
 import os
 import time
 import random
+import unittest
+import uuid
 
-from swift.common import ring, storage_policy
+from swift.common import ring, storage_policy, utils as swift_utils
 
 from kinetic_swift.obj import replicator, server
 
@@ -60,6 +62,43 @@ def create_rings(data_dir, *ports):
         with closing(gzip.GzipFile(object_ring_path, 'wb')) as f:
             ring_data = ring.RingData(replica2part2device, devices, 30)
             pickle.dump(ring_data, f)
+
+
+class TestUtilFunctions(unittest.TestCase):
+
+    def test_split_key(self):
+        hash_ = swift_utils.hash_path('a', 'c', 'o')
+        t = swift_utils.Timestamp(time.time())
+        nonce = uuid.uuid4()
+        key = 'objects.%s.%s.%s' % (hash_, t.internal, nonce)
+        expected = {
+            'hashpath': hash_,
+            'nonce': str(nonce),
+            'policy': storage_policy.POLICIES.legacy,
+            'timestamp': t.internal,
+        }
+        self.assertEqual(replicator.split_key(key), expected)
+
+    def test_multiple_polices(self):
+        hash_ = swift_utils.hash_path('a', 'c', 'o')
+        t = swift_utils.Timestamp(time.time())
+        nonce = uuid.uuid4()
+        with utils.patch_policies(with_ec_default=True):
+            for p in storage_policy.POLICIES:
+                object_prefix = storage_policy.get_policy_string('objects', p)
+                key = '%(prefix)s.%(hash)s.%(timestamp)s.%(nonce)s' % {
+                    'prefix': object_prefix,
+                    'hash': hash_,
+                    'timestamp': t.internal,
+                    'nonce': nonce,
+                }
+                expected = {
+                    'hashpath': hash_,
+                    'policy': p,
+                    'nonce': str(nonce),
+                    'timestamp': t.internal,
+                }
+                self.assertEqual(replicator.split_key(key), expected)
 
 
 @utils.patch_policies(with_ec_default=False)
@@ -220,23 +259,23 @@ class TestKineticReplicator(utils.KineticSwiftTestCase):
         result = self.get_object(target_device, 'random_object')
         self.assertEquals(result, expected)
 
-    def test_nounce_reconciliation(self):
+    def test_nonce_reconciliation(self):
         source_port = self.ports[0]
         source_device = '127.0.0.1:%s' % source_port
         source_client = self.client_map[source_port]
         target_port = self.ports[1]
         target_device = '127.0.0.1:%s' % target_port
         target_client = self.client_map[target_port]
-        # two requests with identical timestamp and different nounce
+        # two requests with identical timestamp and different nonce
         req_timestamp = time.time()
         self.put_object(source_device, 'obj1', timestamp=req_timestamp)
         self.put_object(target_device, 'obj1', timestamp=req_timestamp)
         source_meta, _body = self.get_object(source_device, 'obj1')
         target_meta, _body = self.get_object(target_device, 'obj1')
         self.assertNotEqual(source_meta, target_meta)
-        source_nounce = source_meta.pop('X-Kinetic-Chunk-Nounce')
-        target_nounce = target_meta.pop('X-Kinetic-Chunk-Nounce')
-        self.assertNotEqual(source_nounce, target_nounce)
+        source_nonce = source_meta.pop('X-Kinetic-Chunk-Nonce')
+        target_nonce = target_meta.pop('X-Kinetic-Chunk-Nonce')
+        self.assertNotEqual(source_nonce, target_nonce)
         self.assertEqual(source_meta, target_meta)
         # peek at keys
         source_resp = source_client.getKeyRange('chunks.', 'objects/')
@@ -248,11 +287,11 @@ class TestKineticReplicator(utils.KineticSwiftTestCase):
             source_key_info = replicator.split_key(source_key)
             target_key_info = replicator.split_key(target_key)
             for key in source_key_info:
-                if key == 'nounce':
+                if key == 'nonce':
                     continue
                 self.assertEqual(source_key_info[key], target_key_info[key])
-            self.assertNotEqual(source_key_info['nounce'],
-                                target_key_info['nounce'])
+            self.assertNotEqual(source_key_info['nonce'],
+                                target_key_info['nonce'])
         original_key_count = len(source_keys)
         # perform replication, should more or less no-op
         self.daemon._replicate(source_device)
@@ -265,11 +304,11 @@ class TestKineticReplicator(utils.KineticSwiftTestCase):
             source_key_info = replicator.split_key(source_key)
             target_key_info = replicator.split_key(target_key)
             for key in source_key_info:
-                if key == 'nounce':
+                if key == 'nonce':
                     continue
                 self.assertEqual(source_key_info[key], target_key_info[key])
-            self.assertNotEqual(source_key_info['nounce'],
-                                target_key_info['nounce'])
+            self.assertNotEqual(source_key_info['nonce'],
+                                target_key_info['nonce'])
         post_replication_key_count = len(source_keys)
         self.assertEquals(original_key_count, post_replication_key_count)
 

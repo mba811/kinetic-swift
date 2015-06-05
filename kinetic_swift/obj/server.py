@@ -41,32 +41,32 @@ SYNC_OPTION_MAP = {
 }
 
 
-def chunk_key(hashpath, nounce, index=None):
+def chunk_key(hashpath, nonce, index=None):
     if index is None:
         # for use with getKeyRange
-        key = 'chunks.%s.%s/' % (hashpath, nounce)
+        key = 'chunks.%s.%s/' % (hashpath, nonce)
     else:
-        key = 'chunks.%s.%s.%0.32d' % (hashpath, nounce, index)
+        key = 'chunks.%s.%s.%0.32d' % (hashpath, nonce, index)
     return key
 
 
-def object_key(policy_index, hashpath, timestamp='',
-               extension='.data', nounce=''):
-    storage_policy = diskfile.get_data_dir(policy_index)
+def object_key(policy, hashpath, timestamp='',
+               extension='.data', nonce=''):
+    storage_policy = diskfile.get_data_dir(policy)
     if timestamp:
         return '%s.%s.%s%s.%s' % (storage_policy, hashpath, timestamp,
-                                  extension, nounce)
+                                  extension, nonce)
     else:
         # for use with getPrevious
         return '%s.%s/' % (storage_policy, hashpath)
 
 
-def async_key(policy_index, hashpath, timestamp):
-    async_policy = diskfile.get_async_dir(policy_index)
+def async_key(policy, hashpath, timestamp):
+    async_policy = diskfile.get_async_dir(policy)
     return '%s.%s.%s' % (async_policy, hashpath, timestamp)
 
 
-def get_nounce(key):
+def get_nonce(key):
     return key.rsplit('.', 1)[-1]
 
 
@@ -121,10 +121,9 @@ class DiskFile(diskfile.DiskFile):
         # this is to neuter the context manager close in GET
         self._took_reader = False
         super(DiskFile, self).__init__(mgr, device_path, *args, **kwargs)
-        self.policy_index = int(self.policy)
         self.hashpath = os.path.basename(self._datadir.rstrip('/'))
         self._buffer = bytearray()
-        self._nounce = None
+        self._nonce = None
         self.chunk_id = 0
         self.upload_size = 0
         self.last_sync = 0
@@ -138,7 +137,7 @@ class DiskFile(diskfile.DiskFile):
         self.logger = mgr.logger
 
     def object_key(self, *args, **kwargs):
-        return object_key(self.policy_index, self.hashpath, *args, **kwargs)
+        return object_key(self.policy, self.hashpath, *args, **kwargs)
 
     def _read(self):
         key = self.object_key()
@@ -148,7 +147,7 @@ class DiskFile(diskfile.DiskFile):
             return
         self.data_file = '.ts.' not in entry.key
         blob = entry.value
-        self._nounce = get_nounce(entry.key)
+        self._nonce = get_nonce(entry.key)
         self._metadata = msgpack.unpackb(blob)
 
     def open(self, **kwargs):
@@ -171,7 +170,7 @@ class DiskFile(diskfile.DiskFile):
             self.close()
 
     def keys(self):
-        return [chunk_key(self.hashpath, self._nounce, i + 1) for i in
+        return [chunk_key(self.hashpath, self._nonce, i + 1) for i in
                 range(self.chunk_id,
                       int(self._metadata['X-Kinetic-Chunk-Count']))]
 
@@ -190,7 +189,7 @@ class DiskFile(diskfile.DiskFile):
 
     @contextmanager
     def create(self, size=None):
-        self._nounce = str(uuid4())
+        self._nonce = str(uuid4())
         self._chunk_id = 0
         try:
             self._pending_write = deque()
@@ -229,7 +228,7 @@ class DiskFile(diskfile.DiskFile):
         if self._buffer:
             # write out the chunk buffer!
             self._chunk_id += 1
-            key = chunk_key(self.hashpath, self._nounce, self._chunk_id)
+            key = chunk_key(self.hashpath, self._nonce, self._chunk_id)
             self._submit_write(key, self._buffer[:self.disk_chunk_size],
                                final=False)
         self._buffer = self._buffer[self.disk_chunk_size:]
@@ -253,13 +252,13 @@ class DiskFile(diskfile.DiskFile):
             self._sync_buffer()
         # zero index, chunk-count is len
         metadata['X-Kinetic-Chunk-Count'] = self._chunk_id
-        metadata['X-Kinetic-Chunk-Nounce'] = self._nounce
+        metadata['X-Kinetic-Chunk-Nonce'] = self._nonce
         metadata['name'] = self._name
         self._metadata = metadata
         blob = msgpack.packb(self._metadata)
         timestamp = diskfile.Timestamp(metadata['X-Timestamp'])
         key = self.object_key(timestamp.internal, self._extension,
-                              self._nounce)
+                              self._nonce)
         self._submit_write(key, blob, final=True)
         self._wait_write()
         if self.unlink_wait:
@@ -274,11 +273,11 @@ class DiskFile(diskfile.DiskFile):
         head_keys = resp.wait()
         pending = deque()
         for head_key in head_keys:
-            nounce = get_nounce(head_key)
+            nonce = get_nonce(head_key)
 
             def key_gen():
-                start_key = chunk_key(self.hashpath, nounce, 0)
-                end_key = chunk_key(self.hashpath, nounce)
+                start_key = chunk_key(self.hashpath, nonce, 0)
+                end_key = chunk_key(self.hashpath, nonce)
                 resp = self.conn.getKeyRange(start_key, end_key,
                                              endKeyInclusive=False)
                 chunk_keys = resp.wait()
@@ -299,9 +298,9 @@ class DiskFile(diskfile.DiskFile):
     def quarantine(self):
         timestamp = diskfile.Timestamp(self._metadata['X-Timestamp'])
         head_key = self.object_key(timestamp.internal, self._extension,
-                                   self._nounce)
+                                   self._nonce)
         keys = [head_key] + [
-            chunk_key(self.hashpath, self._nounce, i + 1) for i in
+            chunk_key(self.hashpath, self._nonce, i + 1) for i in
             range(int(self._metadata['X-Kinetic-Chunk-Count']))]
         quarantine_prefix = 'quarantine.%s.' % diskfile.Timestamp(
             time.time()).internal

@@ -31,6 +31,7 @@ from kinetic_swift.obj.server import object_key, install_kinetic_diskfile
 
 def split_key(key):
     parts = key.split('.')
+    # TODO: use storage_policy.split_policy_string
     storage_policy = parts[0]
     if '-' in storage_policy:
         base, policy_index = storage_policy.split('-', 1)
@@ -145,6 +146,13 @@ class KineticReplicator(ObjectReplicator):
         )
         return conn
 
+    def reconstruct_fa(self, conn, key, target):
+        # get object info from conn
+        # find target in ring
+        # internal client GET
+        # direct client PUT
+        return
+
     def replicate_object(self, conn, key, targets, delete=False):
         keys = None
         success = 0
@@ -153,6 +161,7 @@ class KineticReplicator(ObjectReplicator):
                 if self.is_object_on_target(target, key):
                     success += 1
                     continue
+                # TODO: if EC & not delete:  reconstruct_fa
                 keys = keys or list(self.iter_object_keys(conn, key))
                 self.replicate_object_to_target(conn, keys, target)
             except Exception:
@@ -215,6 +224,7 @@ class KineticReplicator(ObjectReplicator):
         self.last_replication_count = -1
         self.partition_times = []
         for policy in POLICIES:
+            # TODO: let EC go through
             if policy.policy_type == EC_POLICY:
                 continue
             obj_ring = self.load_object_ring(policy)

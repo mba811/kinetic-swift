@@ -50,12 +50,16 @@ def chunk_key(hashpath, nonce, index=None):
     return key
 
 
-def object_key(policy, hashpath, timestamp='',
-               extension='.data', nonce=''):
+def object_key(policy, hashpath, timestamp='', extension='.data',
+               nonce='', frag_index=None):
+    if frag_index is not None:
+        frag_trailer = '-%s' % frag_index
+    else:
+        frag_trailer = ''
     storage_policy = diskfile.get_data_dir(policy)
     if timestamp:
-        return '%s.%s.%s%s.%s' % (storage_policy, hashpath, timestamp,
-                                  extension, nonce)
+        return '%s.%s.%s%s.%s%s' % (storage_policy, hashpath, timestamp,
+                                    extension, nonce, frag_trailer)
     else:
         # for use with getPrevious
         return '%s.%s/' % (storage_policy, hashpath)
@@ -67,7 +71,19 @@ def async_key(policy, hashpath, timestamp):
 
 
 def get_nonce(key):
-    return key.rsplit('.', 1)[-1]
+    """
+    A nonce is a unique id for an data blob on the disk - each replicate of an
+    object will have a different nonce.  Each fragment archive of an EC object
+    will have a different nonce with a frag_index appended.
+
+    Like the timestamp we don't know the frag index until the end.  The nonce
+    of data blobs chunks won't have the frag_index appended to it.
+
+    This parser will pull apart a key, find the nonce and stip of the
+    frag_index if there is one.
+    """
+    nonce_parts = key.rsplit('.', 1)[-1].split('-')
+    return '-'.join(nonce_parts[:5])
 
 
 class DiskFileReader(diskfile.DiskFileReader):
@@ -136,8 +152,10 @@ class DiskFile(diskfile.DiskFile):
         self.conn = mgr.get_connection(host, port)
         self.logger = mgr.logger
 
-    def object_key(self, *args, **kwargs):
-        return object_key(self.policy, self.hashpath, *args, **kwargs)
+    def object_key(self, timestamp='', **kwargs):
+        return object_key(policy=self.policy, hashpath=self.hashpath,
+                          timestamp=timestamp, extension=self._extension,
+                          nonce=self._nonce, **kwargs)
 
     def _read(self):
         key = self.object_key()
@@ -257,8 +275,8 @@ class DiskFile(diskfile.DiskFile):
         self._metadata = metadata
         blob = msgpack.packb(self._metadata)
         timestamp = diskfile.Timestamp(metadata['X-Timestamp'])
-        key = self.object_key(timestamp.internal, self._extension,
-                              self._nonce)
+        frag_index = metadata.get('X-Object-Sysmeta-Ec-Frag-Index')
+        key = self.object_key(timestamp.internal, frag_index=frag_index)
         self._submit_write(key, blob, final=True)
         self._wait_write()
         if self.unlink_wait:
@@ -269,6 +287,8 @@ class DiskFile(diskfile.DiskFile):
     def _unlink_old(self, req_timestamp):
         start_key = self.object_key()[:-1]
         end_key = self.object_key(timestamp=req_timestamp.internal)
+        end_key = object_key(self.policy, self.hashpath,
+                             timestamp=req_timestamp.internal, extension='')
         resp = self.conn.getKeyRange(start_key, end_key, endKeyInclusive=False)
         head_keys = resp.wait()
         pending = deque()
@@ -297,8 +317,8 @@ class DiskFile(diskfile.DiskFile):
 
     def quarantine(self):
         timestamp = diskfile.Timestamp(self._metadata['X-Timestamp'])
-        head_key = self.object_key(timestamp.internal, self._extension,
-                                   self._nonce)
+        frag_index = self._metadata.get('X-Object-Sysmeta-Ec-Frag-Index')
+        head_key = self.object_key(timestamp.internal, frag_index=frag_index)
         keys = [head_key] + [
             chunk_key(self.hashpath, self._nonce, i + 1) for i in
             range(int(self._metadata['X-Kinetic-Chunk-Count']))]

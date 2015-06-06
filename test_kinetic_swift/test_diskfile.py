@@ -33,7 +33,6 @@ class TestDiskFile(KineticSwiftTestCase):
         self.logger = debug_logger('test-kinetic')
         server.install_kinetic_diskfile()
         self.policy = random.choice(list(server.diskfile.POLICIES))
-        print self.policy.policy_type
         self.router = server.diskfile.DiskFileRouter(
             {}, self.logger)
         self.mgr = self.router[self.policy]
@@ -90,6 +89,47 @@ class TestDiskFile(KineticSwiftTestCase):
         with df.create() as writer:
             writer.write('awesome')
             writer.put({'X-Timestamp': time.time()})
+
+    def test_put_with_frag_index(self):
+        # setup an object w/o a fragment index
+        df = self.mgr.get_diskfile(self.device, '0', 'a', 'c',
+                                   self.buildKey('o'), self.policy)
+
+        start = time.time()
+        with df.create() as writer:
+            writer.write('awesome')
+            writer.put({'X-Timestamp': start})
+
+        resp = self.client.getKeyRange('objects,', 'objects/')
+        keys = resp.wait()
+        self.assertEqual(len(keys), 1)
+        head_key = keys[0]
+        # policy.hash.t.s.ext.nonce
+        nonce = head_key.rsplit('.', 1)[1]
+        nonce_parts = nonce.split('-')
+        # nonce is just a uuid
+        self.assertEqual(5, len(nonce_parts))
+
+        # now create the object with a frag index!
+        now = start + 1
+        with df.create() as writer:
+            writer.write('awesome')
+            writer.put({
+                'X-Timestamp': now,
+                'X-Object-Sysmeta-Ec-Frag-Index': '7',
+            })
+
+        resp = self.client.getKeyRange('objects,', 'objects/')
+        keys = resp.wait()
+        self.assertEqual(len(keys), 1)
+        head_key = keys[0]
+        # policy.hash.t.s.ext.nonce-frag
+        nonce = head_key.rsplit('.', 1)[1]
+        nonce_parts = nonce.split('-')
+        # nonce is now a uuid with a frag_index on the end
+        self.assertEqual(6, len(nonce_parts))
+        # and it has the value of the ec-frag-index
+        self.assertEqual(int(nonce_parts[-1]), 7)
 
     def test_put_and_get(self):
         df = self.mgr.get_diskfile(self.device, '0', 'a', 'c',

@@ -443,7 +443,8 @@ class ObjectController(server.ObjectController):
     def setup(self, conf):
         super(ObjectController, self).setup(conf)
         kinetic_logger = logging.getLogger('kinetic')
-        for handler in self.logger.logger.handlers:
+        # DebugLogger's don't have handlers
+        for handler in getattr(self.logger.logger, 'handlers', []):
             kinetic_logger.addHandler(handler)
 
 

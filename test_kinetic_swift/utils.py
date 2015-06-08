@@ -92,5 +92,14 @@ class KineticSwiftTestCase(unittest.TestCase):
         teardown_simulators(self._sim_map)
         shutil.rmtree(self.test_dir)
 
+    def stop_simulator(self, *ports):
+        teardown_simulators({port: self._sim_map.pop(port) for port in ports})
+
+    def start_simulator(self, *ports):
+        self._sim_map.update(start_simulators(self.test_dir, *ports))
+        for port in ports:
+            conn = self.client_map[port]
+            conn.reconnect()
+
     def buildKey(self, key):
         return 'test/kinetic_swift/%s/%s' % (self.id(), key)

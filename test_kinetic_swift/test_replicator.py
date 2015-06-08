@@ -11,6 +11,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections import defaultdict
 from contextlib import closing
 import cPickle as pickle
 import gzip
@@ -20,10 +21,14 @@ import time
 import random
 import unittest
 import uuid
+import eventlet
+from StringIO import StringIO
+from ConfigParser import ConfigParser
 
 from swift.common import ring, storage_policy, utils as swift_utils
 
 from kinetic_swift.obj import replicator, server
+from kinetic_swift.utils import ic_conf_body
 
 import utils
 
@@ -55,6 +60,7 @@ def create_rings(data_dir, *ports):
         for replica in range(2):
             dev_id = device_id_gen.next()
             replica2part2device[replica].append(dev_id)
+    ring_data = ring.RingData(replica2part2device, devices, 30)
 
     for policy in storage_policy.POLICIES:
         object_ring_path = os.path.join(
@@ -73,32 +79,51 @@ class TestUtilFunctions(unittest.TestCase):
         key = 'objects.%s.%s.%s' % (hash_, t.internal, nonce)
         expected = {
             'hashpath': hash_,
+            'frag_index': None,
             'nonce': str(nonce),
             'policy': storage_policy.POLICIES.legacy,
             'timestamp': t.internal,
         }
-        self.assertEqual(replicator.split_key(key), expected)
+        try:
+            self.assertEqual(replicator.split_key(key), expected)
+        except AssertionError as e:
+            msg = '%s for key %r' % (e, key)
+            self.fail(msg)
 
     def test_multiple_polices(self):
         hash_ = swift_utils.hash_path('a', 'c', 'o')
         t = swift_utils.Timestamp(time.time())
         nonce = uuid.uuid4()
+        key_template = '%(prefix)s.%(hash)s.%(timestamp)s' \
+            '.%(nonce)s%(trailing_frag)s'
         with utils.patch_policies(with_ec_default=True):
             for p in storage_policy.POLICIES:
+                if p.policy_type == storage_policy.EC_POLICY:
+                    frag_index = random.randint(0, 10)
+                    trailing_frag = '-%d' % (frag_index)
+                else:
+                    frag_index = None
+                    trailing_frag = ''
                 object_prefix = storage_policy.get_policy_string('objects', p)
-                key = '%(prefix)s.%(hash)s.%(timestamp)s.%(nonce)s' % {
+                key = key_template % {
                     'prefix': object_prefix,
                     'hash': hash_,
                     'timestamp': t.internal,
                     'nonce': nonce,
+                    'trailing_frag': trailing_frag,
                 }
                 expected = {
                     'hashpath': hash_,
                     'policy': p,
                     'nonce': str(nonce),
+                    'frag_index': frag_index,
                     'timestamp': t.internal,
                 }
-                self.assertEqual(replicator.split_key(key), expected)
+                try:
+                    self.assertEqual(replicator.split_key(key), expected)
+                except AssertionError as e:
+                    msg = '%s\n\n ... for key %r' % (e, key)
+                    self.fail(msg)
 
 
 @utils.patch_policies(with_ec_default=False)
@@ -180,25 +205,6 @@ class TestKineticReplicator(utils.KineticSwiftTestCase):
                 if str(policy) in msg:
                     found_storage_policies.add(policy)
         self.assertEqual(found_storage_policies, set(storage_policy.POLICIES))
-
-    @utils.patch_policies(with_ec_default=True)
-    def test_do_not_replicate_ec_policy(self):
-        for policy in server.diskfile.POLICIES:
-            if policy.policy_type != storage_policy.EC_POLICY:
-                policy.object_ring = None
-                self.daemon.load_object_ring(policy)
-        self.daemon.run_once()
-        found_storage_policies = set()
-        for msg in self.daemon.logger.get_lines_for_level('debug'):
-            if 'begin replication' not in msg.lower():
-                continue
-            for policy in storage_policy.POLICIES:
-                if str(policy) in msg:
-                    found_storage_policies.add(policy)
-        self.assertEqual(found_storage_policies, set([
-            p for p in storage_policy.POLICIES
-            if p.policy_type != storage_policy.EC_POLICY
-        ]))
 
     def test_do_not_replicate_other_policy(self):
         other_policy = random.choice([
@@ -370,6 +376,250 @@ class TestKineticReplicator(utils.KineticSwiftTestCase):
 class TestKineticCopyReplicator(TestKineticReplicator):
 
     REPLICATION_MODE = 'copy'
+
+
+def create_ec_rings(data_dir, obj_port, *ports):
+    """
+    This makes a four node, four part ring.
+    """
+
+    devices = []
+    for port in ports:
+        devices.append({
+            'id': 0,
+            'zone': 0,
+            'ip': '127.0.0.1',
+            'port': obj_port,
+            'device': '127.0.0.1:%s' % port,
+        })
+
+    def iter_devices():
+        if not devices:
+            return
+        while True:
+            for dev_id in range(len(devices)):
+                yield dev_id
+
+    device_id_gen = iter_devices()
+    replica2part2device = ([], [], [])
+    for part in range(4):
+        for replica in range(3):
+            dev_id = device_id_gen.next()
+            replica2part2device[replica].append(dev_id)
+
+    for policy in storage_policy.POLICIES:
+        object_ring_path = os.path.join(
+            data_dir, policy.ring_name + '.ring.gz')
+        with closing(gzip.GzipFile(object_ring_path, 'wb')) as f:
+            ring_data = ring.RingData(replica2part2device, devices, 30)
+            pickle.dump(ring_data, f)
+
+
+def create_replicated_ring_data(port, *devices):
+    """
+    Three device, single port, two replica ring.
+    """
+    ring_devices = []
+    for i, device in enumerate(devices):
+        ring_devices.append({
+            'id': i,
+            'zone': 0,
+            'device': device,
+            'ip': '127.0.0.1',
+            'port': port,
+        })
+
+    def iter_devices():
+        if not ring_devices:
+            return
+        while True:
+            for dev_id in range(len(ring_devices)):
+                yield dev_id
+
+    device_id_gen = iter_devices()
+    replica2part2device = ([], [])
+    for part in range(4):
+        for replica in range(2):
+            dev_id = device_id_gen.next()
+            replica2part2device[replica].append(dev_id)
+
+    return ring.RingData(replica2part2device, ring_devices, 30)
+
+
+from swift.account import server as account_server
+from swift.container import server as container_server
+
+
+def create_ac_servers(data_dir):
+    controller_map = {
+        'account': account_server.AccountController,
+        'container': container_server.ContainerController,
+    }
+    devices = ['sda', 'sdb', 'sdc']
+    device_dir = os.path.join(data_dir, 'devs')
+    os.makedirs(device_dir)
+    conf = {
+        'swift_dir': data_dir,
+        'devices': device_dir,
+        'mount_check': False,
+    }
+    servers = []
+    for server_type, controller_class in controller_map.items():
+        socket = eventlet.listen(('127.0.0.1', 0))
+        port = socket.getsockname()[1]
+        ring_path = os.path.join(data_dir, server_type + '.ring.gz')
+        with closing(gzip.GzipFile(ring_path, 'wb')) as f:
+            ring_data = create_replicated_ring_data(port, *devices)
+            pickle.dump(ring_data, f)
+        logger = utils.debug_logger(server_type)
+        app = controller_class(conf, logger=logger)
+        server = eventlet.spawn(eventlet.wsgi.server, socket, app, logger)
+        servers.append(server)
+    return servers
+
+
+@utils.patch_policies([
+    storage_policy.ECStoragePolicy(0, 'ec', ec_type='jerasure_rs_vand',
+                                   ec_ndata=2, ec_nparity=1,
+                                   ec_segment_size=4096)
+])
+class TestKineticECReplicator(utils.KineticSwiftTestCase):
+
+    PORTS = (9010, 9020, 9030, 9040)
+
+    def setUp(self):
+        self.servers = []
+        super(TestKineticECReplicator, self).setUp()
+        self.servers.extend(create_ac_servers(self.test_dir))
+        # create object server & rings
+        obj_socket = eventlet.listen(('127.0.0.1', 0))
+        obj_port = obj_socket.getsockname()[1]
+        create_ec_rings(self.test_dir, obj_port, *self.ports)
+        recon_cache_path = os.path.join(self.test_dir, 'recon_cache')
+        os.makedirs(recon_cache_path)
+        internal_client_path = os.path.join(
+            self.test_dir, 'internal-client.conf')
+        conf = {
+            'swift_dir': self.test_dir,
+            'mount_check': False,
+            'recon_cache_path': recon_cache_path,
+            'internal_client_conf_path': internal_client_path,
+        }
+        server.install_kinetic_diskfile()
+        self.app = server.ObjectController(
+            conf, logger=utils.debug_logger('object'))
+        self.servers.append(eventlet.spawn(
+            eventlet.wsgi.server, obj_socket, self.app, self.app.logger))
+        # setup replicator daemon
+        parser = ConfigParser()
+        parser.readfp(StringIO(ic_conf_body))
+        parser.set('DEFAULT', 'swift_dir', self.test_dir)
+        parser.set('DEFAULT', 'account_autocreate', 'true')
+        parser.set('DEFAULT', 'memcache_servers', '127.0.0.1:666')
+        with open(internal_client_path, 'w') as f:
+            parser.write(f)
+        self.daemon = replicator.KineticReplicator(conf)
+        # force ring reload
+        for policy in server.diskfile.POLICIES:
+            policy.object_ring = None
+            self.daemon.load_object_ring(policy)
+        self.logger = self.daemon.logger = \
+            utils.debug_logger('test-kinetic-replicator')
+        self.policy = random.choice([
+            p for p in storage_policy.POLICIES
+            if p.policy_type == storage_policy.EC_POLICY])
+        # give the servers a chance to start
+        timeout = time.time() + 30
+        i = 0
+        while time.time() < timeout:
+            try:
+                self.daemon.swift.create_container('a', 'c')
+            except Exception:
+                self.logger.debug('failed to create account attempt #%d' % i)
+            else:
+                break
+            i += 1
+        else:
+            self.tearDown()
+            self.fail('failed to create a container after %s attempts' % i)
+
+    def tearDown(self):
+        for coro in self.servers:
+            coro.kill()
+        super(TestKineticECReplicator, self).tearDown()
+
+    def find_frags(self):
+        frags = defaultdict(list)
+        for port in self.ports:
+            conn = self.client_map[port]
+            resp = conn.getKeyRange('objects.', 'objects/')
+            for key in resp.wait():
+                key_info = replicator.split_key(key)
+                frags[port].append(key_info['frag_index'])
+        return frags
+
+    def test_ec_object(self):
+        test_body = ('a' * 4096 * 3)[:-438]
+        fobj = StringIO(test_body)
+        self.daemon.swift.upload_object(fobj, 'a', 'c', 'o')
+        frags = self.find_frags()
+        found_frag_indexes = set(itertools.chain(*frags.values()))
+        self.assertEqual(len(found_frag_indexes), 3)
+        status, headers, body_iter = self.daemon.swift.get_object(
+            'a', 'c', 'o', {})
+        self.assertEqual(status, 200)
+        check_body = ''.join(body_iter)
+        self.assertEqual(len(check_body), len(test_body))
+        self.assertEqual(check_body, test_body)
+
+    def test_ec_handoff(self):
+        # fail one of the primary disks for the object
+        part, nodes = self.policy.object_ring.get_nodes('a', 'c', 'o')
+        bad_disk = int(random.choice(nodes)['device'].split(':', 1)[-1])
+        self.stop_simulator(bad_disk)
+        # upload an object
+        self.daemon.swift.upload_object(StringIO('asdf'), 'a', 'c', 'o')
+        # restart the simulator
+        self.start_simulator(bad_disk)
+        # verify it's on a handoff
+        handoff_frags = self.find_frags()
+        self.assertEqual(len(set(itertools.chain(
+            *handoff_frags.values()))), 3)
+        self.assertTrue(bad_disk not in handoff_frags)
+        # run rebuild
+        self.daemon.run_once()
+        # verify it's back on the primary
+        fixed_frags = self.find_frags()
+        self.assertEqual(len(set(itertools.chain(
+            *fixed_frags.values()))), 3)
+        self.assertTrue(bad_disk in fixed_frags)
+
+    def test_ec_rebuild(self):
+        # upload an object
+        self.daemon.swift.upload_object(StringIO('asdf'), 'a', 'c', 'o')
+        # sanity, all frags on different nodes
+        frags = self.find_frags()
+        self.assertEqual(len(frags), 3)
+        # pick one of the primaries to blow up
+        part, nodes = self.policy.object_ring.get_nodes('a', 'c', 'o')
+        bad_disk = int(random.choice(nodes)['device'].split(':', 1)[-1])
+        conn = self.client_map[bad_disk]
+        # delete the head key
+        resp = conn.getKeyRange('objects.', 'objects/')
+        for key in resp.wait():
+            conn.delete(key)
+        # sanity
+        frags = self.find_frags()
+        self.assertEqual(len(set(itertools.chain(
+            *frags.values()))), 2)
+        # run rebuild
+        for i in range(3):
+            self.daemon.run_once()
+        # verify it's back on the primary
+        fixed_frags = self.find_frags()
+        self.assertEqual(len(set(itertools.chain(
+            *fixed_frags.values()))), 3)
+        self.assertTrue(bad_disk in fixed_frags)
 
 
 if __name__ == "__main__":

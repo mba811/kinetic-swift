@@ -19,27 +19,39 @@ import sys
 import time
 import struct
 
-from swift.common.utils import parse_options
+import msgpack
+
+from swift.common.utils import parse_options, split_path
 from swift.common.daemon import run_daemon
+from swift.common.direct_client import direct_put_object
 from swift.obj.replicator import ObjectReplicator
 from swift import gettext_ as _
 from swift.common.storage_policy import (
     POLICIES, EC_POLICY, get_policy_string, split_policy_string)
 
 from kinetic_swift.client import KineticSwiftClient
+from kinetic_swift.utils import get_internal_client
 from kinetic_swift.obj.server import object_key, install_kinetic_diskfile
 
 
 def split_key(key):
     parts = key.split('.')
-    _base, policy = split_policy_string(parts[0])
+    base, policy = split_policy_string(parts[0])
+    if base != 'objects':
+        return False
     hashpath = parts[1]
     timestamp = '.'.join(parts[2:4])
-    nonce = parts[-1]
+    nonce_parts = parts[-1].split('-')
+    nonce = '-'.join(nonce_parts[:5])
+    if len(nonce_parts) > 5:
+        frag_index = int(nonce_parts[5])
+    else:
+        frag_index = None
     return {
         'policy': policy,
         'hashpath': hashpath,
         'nonce': nonce,
+        'frag_index': frag_index,
         'timestamp': timestamp,
     }
 
@@ -55,6 +67,8 @@ class KineticReplicator(ObjectReplicator):
         # device => [last_used, conn]
         self._conn_pool = {}
         self.max_connections = 10
+        self.swift = get_internal_client(conf, 'Kinetic Object Rebuilder',
+                                         self.logger)
 
     def iter_all_objects(self, conn, policy):
         prefix = get_policy_string('objects', policy)
@@ -75,8 +89,43 @@ class KineticReplicator(ObjectReplicator):
         raw_digest = key_info['hashpath'].decode('hex')
         part = struct.unpack_from('>I', raw_digest)[0] >> \
             policy.object_ring._part_shift
-        devices = policy.object_ring.get_part_nodes(part)
-        return [d['device'] for d in devices]
+        return policy.object_ring.get_part_nodes(part)
+
+    def build_job(self, device, key, policy):
+        key_info = split_key(key)
+        # ring magic, find all of the nodes for the partion of the given hash
+        raw_digest = key_info['hashpath'].decode('hex')
+        part = struct.unpack_from('>I', raw_digest)[0] >> \
+            policy.object_ring._part_shift
+        nodes = policy.object_ring.get_part_nodes(part)
+        # filter current device from nodes if primary
+        targets = [n for n in nodes if n['device'] != device]
+        if policy.policy_type == EC_POLICY:
+            if nodes[key_info['frag_index']]['device'] == device:
+                # this is the primary device for this frag_index
+                delete = False
+            else:
+                delete = True
+                targets = [n for n in targets
+                           if n['index'] == key_info['frag_index']]
+        else:
+            if nodes == targets:
+                # the targets for this key do not include our device
+                delete = True
+            else:
+                # this node is a primary for this part
+                delete = False
+        job = {
+            'device': device,
+            'key': key,
+            'key_info': key_info,
+            'part': part,
+            'policy': policy,
+            'frag_index': key_info['frag_index'],
+            'targets': targets,
+            'delete': delete,
+        }
+        return job
 
     def iter_object_keys(self, conn, key):
         yield key
@@ -87,24 +136,30 @@ class KineticReplicator(ObjectReplicator):
             yield key
 
     def replicate_object_to_target(self, conn, keys, target):
+        device = target['device']
         if self.replication_mode == 'push':
-            conn.push_keys(target, keys)
+            conn.push_keys(device, keys)
         else:
-            conn.copy_keys(target, keys)
+            conn.copy_keys(device, keys)
 
     def is_object_on_target(self, target, key):
         # get key ready for getPrevious on target
         key_info = split_key(key)
         key = object_key(key_info['policy'], key_info['hashpath'])
 
-        conn = self.get_conn(target)
+        conn = self.get_conn(target['device'])
         entry = conn.getPrevious(key).wait()
         if not entry:
             return False
         target_key_info = split_key(entry.key)
+        if not target_key_info:
+            return False
         if target_key_info['hashpath'] != key_info['hashpath']:
             return False
         if target_key_info['timestamp'] < key_info['timestamp']:
+            return False
+        if (target_key_info['frag_index'] is not None and
+                target_key_info['frag_index'] != target.get('index')):
             return False
         return True
 
@@ -141,53 +196,86 @@ class KineticReplicator(ObjectReplicator):
         )
         return conn
 
-    def reconstruct_fa(self, conn, key, target):
-        # get object info from conn
-        # find target in ring
-        # internal client GET
-        # direct client PUT
-        return
+    def reconstruct_fa(self, conn, target, job):
+        """
+        Use internal client to rebuild the object data needed to reconstruct
+        the fragment archive that is missing on the target node.
 
-    def replicate_object(self, conn, key, targets, delete=False):
+        :param conn: a KineticClient connection to the device which has the
+                      object metadata for the fragment archive we're rebuilding
+        :param target: the ring node which is missing the fragment archive
+        :param job: the job dict
+        """
+        key_info = split_key(job['key'])
+        # get object info from conn
+        resp = conn.get(job['key'])
+        entry = resp.wait()
+        info = msgpack.unpackb(entry.value)
+        # internal client GET
+        account, container, obj = split_path(
+            info['name'], 3, rest_with_last=True)
+        status, headers, body_iter = self.swift.get_object(
+            account, container, obj, {})
+        if headers['x-timestamp'] != key_info['timestamp']:
+            return False
+        headers.pop('etag', None)
+        headers.update({
+            'X-Object-Sysmeta-Ec-Frag-Index': target['index'],
+        })
+
+        # make ec_frag body iter
+        def make_segment_iter(segment_size):
+            segment_buff = ''
+            for chunk in body_iter:
+                segment_buff += chunk
+                if len(segment_buff) > segment_size:
+                    yield segment_buff[:segment_size]
+                    segment_buff = segment_buff[segment_size:]
+            yield segment_buff
+
+        def make_frag_iter(policy, frag_index):
+            for segment in make_segment_iter(policy.ec_segment_size):
+                yield policy.pyeclib_driver.encode(segment)[frag_index]
+        # direct client PUT
+        direct_put_object(target, job['part'], account, container, obj,
+                          make_frag_iter(job['policy'], target['index']),
+                          headers=headers)
+
+    def replicate_object(self, conn, job):
         keys = None
         success = 0
-        for target in targets:
+        for target in job['targets']:
             try:
-                if self.is_object_on_target(target, key):
+                if self.is_object_on_target(target, job['key']):
                     success += 1
                     continue
-                # TODO: if EC & not delete:  reconstruct_fa
-                keys = keys or list(self.iter_object_keys(conn, key))
-                self.replicate_object_to_target(conn, keys, target)
+                if (job['policy'].policy_type == EC_POLICY
+                        and not job['delete']):
+                    if not self.reconstruct_fa(conn, target, job):
+                        continue
+                else:
+                    keys = keys or list(self.iter_object_keys(
+                        conn, job['key']))
+                    self.replicate_object_to_target(conn, keys, target)
             except Exception:
                 self.logger.exception('Unable to replicate %r to %r',
-                                      key, target)
+                                      job['key'], target['device'])
             else:
-                self.logger.info('successfully replicated %r to %r',
-                                 key, target)
+                self.logger.info('Successfully replicated %r to %r',
+                                 job['key'], target['device'])
                 success += 1
-        if delete and success >= len(targets):
+        if job['delete'] and success >= len(job['targets']):
             # might be nice to drop the whole partition at once
-            keys = keys or list(self.iter_object_keys(conn, key))
+            keys = keys or list(self.iter_object_keys(conn, job['key']))
             conn.delete_keys(keys)
-            self.logger.info('successfully removed handoff %r to %r',
-                             key, targets)
+            self.logger.info(
+                'successfully removed handoff %(key)r to %(device)r', job)
 
     def replicate_device(self, device, conn, policy):
         self.logger.info('begining replication pass for %r', device)
         for key in self.iter_all_objects(conn, policy):
-            # might be a good place to collect jobs and group by
-            # partition and/or target
-            targets = list(self.find_target_devices(key, policy))
-            try:
-                targets.remove(device)
-            except ValueError:
-                # device is not a target
-                delete = True
-            else:
-                # object is supposed to be here
-                delete = False
-            self.replicate_object(conn, key, targets, delete=delete)
+            job = self.build_job(device, key, policy)
+            self.replicate_object(conn, job)
 
     def _replicate(self, *devices, **kwargs):
         policy = kwargs.get('policy', POLICIES.legacy)
@@ -219,9 +307,6 @@ class KineticReplicator(ObjectReplicator):
         self.last_replication_count = -1
         self.partition_times = []
         for policy in POLICIES:
-            # TODO: let EC go through
-            if policy.policy_type == EC_POLICY:
-                continue
             obj_ring = self.load_object_ring(policy)
             devices = override_devices or [d['device'] for d in
                                            obj_ring.devs if d]

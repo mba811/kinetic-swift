@@ -88,6 +88,11 @@ class KineticSwiftClient(object):
             return True
         return self.conn.faulted
 
+    def reconnect(self):
+        self.conn.close()
+        self.conn.faulted = False
+        self.conn.connect()
+
     def getPrevious(self, *args, **kwargs):
         # self.log_info('getPrevious')
         promise = Response(self)

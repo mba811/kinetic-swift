@@ -216,22 +216,29 @@ class KineticReplicator(ObjectReplicator):
             info['name'], 3, rest_with_last=True)
         status, headers, body_iter = self.swift.get_object(
             account, container, obj, {})
+        if status // 100 != 2:
+            return False
         if headers['x-timestamp'] != key_info['timestamp']:
             return False
-        headers.pop('etag', None)
+        for header in ('etag', 'content-length'):
+            headers.pop(header, None)
         headers.update({
             'X-Object-Sysmeta-Ec-Frag-Index': target['index'],
+            'X-Backend-Storage-Policy-Index': int(job['policy']),
         })
 
         # make ec_frag body iter
         def make_segment_iter(segment_size):
             segment_buff = ''
             for chunk in body_iter:
+                if not chunk:
+                    break
                 segment_buff += chunk
-                if len(segment_buff) > segment_size:
+                if len(segment_buff) >= segment_size:
                     yield segment_buff[:segment_size]
                     segment_buff = segment_buff[segment_size:]
-            yield segment_buff
+            if segment_buff:
+                yield segment_buff
 
         def make_frag_iter(policy, frag_index):
             for segment in make_segment_iter(policy.ec_segment_size):

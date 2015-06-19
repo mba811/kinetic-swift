@@ -25,7 +25,7 @@ from swift.common.storage_policy import POLICIES
 from swift.common.utils import parse_options, list_from_csv
 from swift.obj.auditor import ObjectAuditor, dump_recon_cache, ratelimit_sleep
 from swift import gettext_ as _
-from swift.obj.diskfile import DiskFileNotExist, DiskFileDeleted
+from swift.obj.diskfile import DiskFileNotExist, DiskFileDeviceUnavailable
 from kinetic_swift.obj.server import DiskFileManager
 
 
@@ -121,6 +121,40 @@ class KineticAuditor(ObjectAuditor):
                     return False
         return True
 
+    def audit_object(self, device, location):
+        success = False
+        try:
+            success = self._audit_object(device, location)
+        except Exception:
+            self.logger.exception('Unhandled exception in audit of %s/%s',
+                                  device, location)
+        return success
+
+    def _audit_device(self, device):
+        for location in self._find_objects(device):
+            self.stats['found_objects'] += 1
+            success = self.audit_object(device, location)
+            if success:
+                self.stats['success'] += 1
+            else:
+                self.stats['failures'] += 1
+
+    def audit_device(self, device):
+        success = False
+        try:
+            self._audit_device(device)
+        except DiskFileDeviceUnavailable:
+            self.logger.warning('Unable to connect to %s', device)
+        except Exception:
+            self.logger.exception('Unhandled exception while auditing %s',
+                                  device)
+        else:
+            success = True
+        if success:
+            self.stats['device.success'] += 1
+        else:
+            self.stats['device.failures'] += 1
+
     def run_once(self, *args, **kwargs):
         self.reset_stats()
         override_devices = list_from_csv(kwargs.get('devices'))
@@ -128,13 +162,7 @@ class KineticAuditor(ObjectAuditor):
         self.logger.info('Starting sweep of %r', devices)
         start = time.time()
         for device in devices:
-            for location in self._find_objects(device):
-                self.stats['found_objects'] += 1
-                success = self._audit_object(device, location)
-                if success:
-                    self.stats['success'] += 1
-                else:
-                    self.stats['failures'] += 1
+            self.audit_device(device)
         self.logger.info('Finished sweep of %r (%ds) => %r', devices,
                          time.time() - start, self.stats)
 

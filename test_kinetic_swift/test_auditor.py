@@ -19,6 +19,7 @@ import msgpack
 
 from swift.common.storage_policy import POLICIES
 
+from swift.obj.diskfile import DiskFileDeleted
 from kinetic_swift.obj import auditor, server
 
 from utils import (KineticSwiftTestCase, debug_logger)
@@ -39,6 +40,29 @@ class TestKineticObjectAuditor(KineticSwiftTestCase):
         self.device = 'localhost:%s' % self.port
         self.policy = random.choice(list(POLICIES))
 
+    def test_audit_offline_skips_and_warns(self):
+        with mock.patch('time.sleep', lambda x: None):
+            self.auditor.run_once(devices=self.device)
+
+        self.assertEqual(self.auditor.stats, {
+            'device.success': 1,
+        })
+
+        self.stop_simulator(self.port)
+
+        with mock.patch('time.sleep', lambda x: None):
+            self.auditor.run_once(devices=self.device)
+
+        self.assertEqual(self.auditor.stats, {
+            'device.failures': 1,
+        })
+
+        warnings = self.logger.get_lines_for_level('warning')
+        for line in warnings:
+            msg = line.lower()
+            self.assert_('unable to connect' in msg)
+            self.assert_(self.device in msg)
+
     def test_put_and_audit(self):
         df = self.auditor.mgr.get_diskfile(self.device, '0', 'a', 'c',
                                            self.buildKey('o'), self.policy)
@@ -56,6 +80,7 @@ class TestKineticObjectAuditor(KineticSwiftTestCase):
         self.assertEqual(self.auditor.stats, {
             'found_objects': 1,
             'success': 1,
+            'device.success': 1,
         })
 
         # check read object
@@ -88,9 +113,10 @@ class TestKineticObjectAuditor(KineticSwiftTestCase):
         self.assertEqual(self.auditor.stats, {
             'found_objects': 1,
             'success': 1,
+            'device.success': 1,
         })
 
-        self.assertRaises(auditor.DiskFileDeleted, df.open)
+        self.assertRaises(DiskFileDeleted, df.open)
         self.assertTrue('does not exist' in
                         self.auditor.logger.get_lines_for_level('debug')[0])
 
@@ -115,6 +141,7 @@ class TestKineticObjectAuditor(KineticSwiftTestCase):
         self.assertEqual(self.auditor.stats, {
             'found_objects': 1,
             'failures': 1,
+            'device.success': 1,
         })
 
         warning_lines = self.logger.get_lines_for_level('warning')
@@ -153,6 +180,7 @@ class TestKineticObjectAuditor(KineticSwiftTestCase):
         self.assertEqual(self.auditor.stats, {
             'found_objects': 1,
             'failures': 1,
+            'device.success': 1,
         })
 
         warning_lines = self.logger.get_lines_for_level('warning')
@@ -192,6 +220,7 @@ class TestKineticObjectAuditor(KineticSwiftTestCase):
         self.assertEqual(self.auditor.stats, {
             'found_objects': 1,
             'success': 1,
+            'device.success': 1,
         })
 
         # check quarantine keys

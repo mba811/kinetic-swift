@@ -1,5 +1,17 @@
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#    http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or
+# implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 import hashlib
-import os
 import random
 import time
 
@@ -44,6 +56,23 @@ class TestKineticObjectUpdater(KineticSwiftTestCase):
         self.updater.container_ring = self.container_ring
         self.updater.logger = self.logger
 
+    def test_device_and_container_down_skips_and_warns(self):
+        with mocked_http_conn():
+            self.updater.run_once(devices=self.devices)
+        self.assertEqual(self.updater.stats, {'device.success': 1})
+
+        self.stop_simulator(self.port)
+
+        with mocked_http_conn():
+            self.updater.run_once(devices=self.devices)
+        self.assertEqual(self.updater.stats, {'device.failures': 1})
+
+        warnings = self.logger.get_lines_for_level('warning')
+        for line in warnings:
+            msg = line.lower()
+            self.assert_('unable to connect' in msg)
+            self.assert_(self.devices in msg)
+
     def test_put_object_async_update(self):
         # put object
         req_timestamp = Timestamp(time.time())
@@ -83,7 +112,7 @@ class TestKineticObjectUpdater(KineticSwiftTestCase):
             self.assertRaises(StopIteration, next, fakeconn.code_iter)
 
         self.assertEqual(self.updater.stats, {
-            'success': 1, 'found_updates': 1})
+            'success': 1, 'found_updates': 1, 'device.success': 1})
         self.assertEquals(self.container_ring.replicas,
                           len(container_updates))
         expected_headers = {
@@ -159,7 +188,7 @@ class TestKineticObjectUpdater(KineticSwiftTestCase):
             self.assertRaises(StopIteration, next, fakeconn.code_iter)
 
         self.assertEqual(self.updater.stats, {
-            'failures': 1, 'found_updates': 1})
+            'failures': 1, 'device.success': 1, 'found_updates': 1})
         self.assertEquals(self.container_ring.replicas,
                           len(container_updates))
         expected_headers = {
@@ -204,7 +233,7 @@ class TestKineticObjectUpdater(KineticSwiftTestCase):
             self.assertRaises(StopIteration, next, fakeconn.code_iter)
 
         self.assertEqual(self.updater.stats, {
-            'failures': 1, 'success': 1, 'found_updates': 2})
+            'success': 1, 'device.success': 1, 'found_updates': 1})
         expected_updates = [
             ('10.0.0.2', 1002, 'PUT', 'sdc', '0', 'a', 'c',
              self.buildKey('o'), expected_headers),

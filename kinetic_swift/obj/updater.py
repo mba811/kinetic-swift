@@ -1,4 +1,16 @@
 #!/usr/bin/env python
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#    http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or
+# implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
 from collections import defaultdict
 from optparse import OptionParser
@@ -14,6 +26,7 @@ from swift.common.storage_policy import POLICIES
 from swift.common.swob import HeaderKeyDict
 from swift.common.utils import parse_options, list_from_csv
 from swift.obj.updater import ObjectUpdater, dump_recon_cache
+from swift.obj.diskfile import DiskFileDeviceUnavailable
 from swift import gettext_ as _
 
 from kinetic_swift.obj.server import DiskFileManager
@@ -23,7 +36,6 @@ class KineticUpdater(ObjectUpdater):
 
     def __init__(self, *args, **kwargs):
         super(KineticUpdater, self).__init__(*args, **kwargs)
-        self.stats = defaultdict(int)
         self.mgr = DiskFileManager(self.conf, self.logger)
 
     def run_forever(self, *args, **kwargs):
@@ -40,7 +52,6 @@ class KineticUpdater(ObjectUpdater):
                              self.rcache, self.logger)
             if elapsed < self.interval:
                 time.sleep(self.interval - elapsed)
-            self.stats = defaultdict(int)
 
     def _get_devices(self):
         return set([
@@ -50,10 +61,24 @@ class KineticUpdater(ObjectUpdater):
         ])
 
     def run_once(self, *args, **kwargs):
+        self.stats = defaultdict(int)
         override_devices = list_from_csv(kwargs.get('devices'))
         devices = override_devices or self._get_devices()
         for device in devices:
-            self.object_sweep(device)
+            success = False
+            try:
+                self.object_sweep(device)
+            except DiskFileDeviceUnavailable:
+                self.logger.warning('Unable to connect to %s', device)
+            except Exception:
+                self.logger.exception('Unhandled exception trying to '
+                                      'sweep object updates on %s', device)
+            else:
+                success = True
+            if success:
+                self.stats['device.success'] += 1
+            else:
+                self.stats['device.failures'] += 1
 
     def _find_updates_entries(self, device):
         conn = self.mgr.get_connection(*device.split(':'))

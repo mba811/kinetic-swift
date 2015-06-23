@@ -70,7 +70,7 @@ end
 
 # build kinetic-simulator
 
-KINETIC_JAR="/vagrant/kinetic-java/kinetic-simulator/target/kinetic-simulator-0.8.0.3-SNAPSHOT-jar-with-dependencies.jar"
+KINETIC_JAR="/vagrant/kinetic-java/kinetic-simulator/target/kinetic-simulator-0.8.0.4-SNAPSHOT-jar-with-dependencies.jar"
 
 execute "mvn-package" do
   cwd "/vagrant/kinetic-java"

@@ -73,15 +73,9 @@ class KineticReplicator(ObjectReplicator):
     def iter_all_objects(self, conn, policy):
         prefix = get_policy_string('objects', policy)
         key_range = [prefix + term for term in ('.', '/')]
-        keys = conn.getKeyRange(*key_range).wait()
-        while keys:
-            for key in keys:
-                # TODO: clean up hashdir and old tombstones
-                yield key
-            # see if there's any more values
-            key_range[0] = key
-            keys = conn.getKeyRange(*key_range,
-                                    startKeyInclusive=False).wait()
+        for key in conn.iterKeyRange(*key_range):
+            # TODO: clean up hashdir and old tombstones
+            yield key
 
     def find_target_devices(self, key, policy):
         key_info = split_key(key)
@@ -131,8 +125,7 @@ class KineticReplicator(ObjectReplicator):
         yield key
         key_info = split_key(key)
         chunk_key = 'chunks.%(hashpath)s.%(nonce)s' % key_info
-        resp = conn.getKeyRange(chunk_key + '.', chunk_key + '/')
-        for key in resp.wait():
+        for key in conn.iterKeyRange(chunk_key + '.', chunk_key + '/'):
             yield key
 
     def replicate_object_to_target(self, conn, keys, target):

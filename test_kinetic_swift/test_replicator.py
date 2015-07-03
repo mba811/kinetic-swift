@@ -195,6 +195,18 @@ class TestKineticReplicator(utils.KineticSwiftTestCase):
             keys = list(self.daemon.iter_all_objects(conn, policy))
             self.assertEqual(1, len(keys))
 
+    def test_iter_lots_of_objects(self):
+        port = self.ports[0]
+        dev = '127.0.0.1:%s' % port
+        for policy in server.diskfile.POLICIES:
+            for i in range(20):
+                self.put_object(dev, 'obj-%s' % i, policy=policy)
+        conn = self.client_map[port]
+        conn.maxReturned = 3
+        for policy in server.diskfile.POLICIES:
+            keys = list(self.daemon.iter_all_objects(conn, policy))
+            self.assertEqual(20, len(keys))
+
     def test_replicate_all_policies(self):
         self.daemon.run_once()
         found_storage_policies = set()

@@ -43,7 +43,7 @@ SYNC_OPTION_MAP = {
 
 def chunk_key(hashpath, nonce, index=None):
     if index is None:
-        # for use with getKeyRange
+        # for use with iterKeyRange
         key = 'chunks.%s.%s/' % (hashpath, nonce)
     else:
         key = 'chunks.%s.%s.%0.32d' % (hashpath, nonce, index)
@@ -289,8 +289,8 @@ class DiskFile(diskfile.DiskFile):
         end_key = self.object_key(timestamp=req_timestamp.internal)
         end_key = object_key(self.policy, self.hashpath,
                              timestamp=req_timestamp.internal, extension='')
-        resp = self.conn.getKeyRange(start_key, end_key, endKeyInclusive=False)
-        head_keys = resp.wait()
+        head_keys = list(self.conn.iterKeyRange(
+            start_key, end_key, endKeyInclusive=False))
         pending = deque()
         for head_key in head_keys:
             nonce = get_nonce(head_key)
@@ -298,10 +298,8 @@ class DiskFile(diskfile.DiskFile):
             def key_gen():
                 start_key = chunk_key(self.hashpath, nonce, 0)
                 end_key = chunk_key(self.hashpath, nonce)
-                resp = self.conn.getKeyRange(start_key, end_key,
-                                             endKeyInclusive=False)
-                chunk_keys = resp.wait()
-                for key in chunk_keys:
+                for key in self.conn.iterKeyRange(start_key, end_key,
+                                                  endKeyInclusive=False):
                     yield key
                 yield head_key
 

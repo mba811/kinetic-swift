@@ -48,6 +48,7 @@ class Response(object):
 class KineticSwiftClient(object):
 
     def __init__(self, logger, host, port, **kwargs):
+        self.maxReturned = None  # use library default
         self.host = self.hostname = host
         self.port = port
         self.response_timeout = kwargs.pop('response_timeout', 30)
@@ -113,6 +114,18 @@ class KineticSwiftClient(object):
         self.conn.getKeyRangeAsync(promise.setResponse, promise.setError,
                                    *args, **kwargs)
         return promise
+
+    def iterKeyRange(self, start_key, end_key, **kwargs):
+        kwargs.setdefault('maxReturned', self.maxReturned)
+        keys = self.getKeyRange(start_key, end_key).wait()
+        while keys:
+            for key in keys:
+                print key
+                yield key
+            # see if there's any more values
+            start_key = key
+            keys = self.getKeyRange(start_key, end_key,
+                                    startKeyInclusive=False).wait()
 
     def delete(self, key, *args, **kwargs):
         # self.log_info('delete')

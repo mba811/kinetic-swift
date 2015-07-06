@@ -19,6 +19,7 @@ from uuid import uuid4
 from eventlet import sleep, Timeout, spawn_n
 import re
 import time
+import memcache
 
 import msgpack
 from swift.obj import diskfile, server
@@ -26,12 +27,13 @@ from swift.common.storage_policy import (POLICIES, split_policy_string,
                                          PolicyError)
 
 from kinetic_swift.client import KineticSwiftClient
-
+from swift.common.exceptions import DiskFileDeviceUnavailable
 from kinetic.common import Synchronization
 
 
 DEFAULT_DEPTH = 2
-
+AVAILABLE_PREFIX = 'kinetic/available/'
+MEMCACHE_SERVERS = ['127.0.0.1:11211']
 
 SYNC_OPTION_MAP = {
     'default': None,
@@ -127,7 +129,7 @@ class DiskFile(diskfile.DiskFile):
 
     reader_cls = DiskFileReader
 
-    def __init__(self, mgr, host, port, *args, **kwargs):
+    def __init__(self, mgr, device, host, port, *args, **kwargs):
         self.unlink_wait = kwargs.pop('unlink_wait', False)
         device_path = ''
         self.disk_chunk_size = kwargs.pop('disk_chunk_size',
@@ -149,7 +151,12 @@ class DiskFile(diskfile.DiskFile):
         self.delete_depth = self._manager.delete_depth
         self.synchronization = self._manager.synchronization
         self.conn = None
-        self.conn = mgr.get_connection(host, port)
+        try:
+            self.conn = mgr.get_connection(host, port)
+        except:
+             # Mark device as offline for other object-servers
+            self.tag_kinetic_device_as_offline(self.device)
+            raise
         self.logger = mgr.logger
 
     def object_key(self, timestamp='', **kwargs):
@@ -352,16 +359,42 @@ class DiskFileManager(diskfile.DiskFileManager):
         self.unlink_wait = \
             server.config_true_value(conf.get('unlink_wait', 'false'))
 
+        self.available_prefix = conf.get('kinetic_available_prefix', AVAILABLE_PREFIX)
+        self.memcache_client = memcache.Client(MEMCACHE_SERVERS, debug=0)
+
+    def get_kinetic_dev_path(self, id):
+        return self.memcache_client.get(self.available_prefix + str(id))
+
+    def tag_kinetic_device_as_offline(self, id):
+        self.memcache_client.delete(self.available_prefix + str(id))
+
+    def _get_address_for_device(self, device):
+        # Caching this will make normal behavior 1ms or 2 faster but 
+        # will increase the cost on all Object-servers when a drive is down
+        address = self.get_kinetic_dev_path(device)
+
+        if address is None:
+            raise DiskFileDeviceUnavailable()
+
+        port = 8123 # default port
+        address = address.split(':')
+        host = address[0]
+        if len(address) > 1: port = address[1]
+
+        return (host,port)
+
     def get_diskfile(self, device, partition, account, container, obj, policy,
                      **kwargs):
-        host, port = device.split(':')
-        return DiskFile(self, host, port, self.threadpools[device],
+       
+        host, port = self._get_address_for_device(device)
+
+        return DiskFile(self, device, host, port, self.threadpools[device],
                         partition, account, container, obj, policy=policy,
                         unlink_wait=self.unlink_wait,
                         **kwargs)
 
     def get_diskfile_from_audit_location(self, device, head_key):
-        host, port = device.split(':')
+        host, port = self._get_address_for_device(device)
         policy_match = re.match('objects([-]?[0-9]?)\.', head_key)
         policy_string = policy_match.group(1)
 
@@ -370,18 +403,24 @@ class DiskFileManager(diskfile.DiskFileManager):
         except PolicyError:
             policy = POLICIES.legacy
         datadir = head_key.split('.', 3)[1]
-        return DiskFile(self, host, port, self.threadpools[device], None,
+        return DiskFile(self, device, host, port, self.threadpools[device], None,
                         policy=policy, _datadir=datadir,
                         unlink_wait=self.unlink_wait)
 
     def pickle_async_update(self, device, account, container, obj, data,
                             timestamp, policy_idx):
-        host, port = device.split(':')
+        host, port = self._get_address_for_device(device)
         hashpath = diskfile.hash_path(account, container, obj)
         key = async_key(policy_idx, hashpath, timestamp)
         blob = msgpack.packb(data)
-        resp = self.get_connection(host, port).put(key, blob)
-        resp.wait()
+        try:
+            conn = self.get_connection(host, port)
+            resp = conn.put(key, blob)
+            resp.wait()
+        except:
+            # Mark device as offline for other object-servers to see
+            self.tag_kinetic_device_as_offline(device)
+            raise
         self.logger.increment('async_pendings')
 
     def _new_connection(self, host, port, **kwargs):

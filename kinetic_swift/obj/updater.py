@@ -84,7 +84,7 @@ class KineticUpdater(ObjectUpdater):
         conn = self.mgr.get_connection(*device.split(':'))
         start_key = 'async_pending'
         end_key = 'async_pending/'
-        for async_key in conn.getKeyRange(start_key, end_key).wait():
+        for async_key in conn.iterKeyRange(start_key, end_key):
             yield async_key
 
     def object_sweep(self, device):

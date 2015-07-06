@@ -79,7 +79,7 @@ class KineticAuditor(ObjectAuditor):
         conn = self.mgr.get_connection(*device.split(':'))
         start_key = 'objects'
         end_key = 'objects/'
-        for head_key in conn.getKeyRange(start_key, end_key).wait():
+        for head_key in conn.iterKeyRange(start_key, end_key):
             yield head_key
 
     def _audit_object(self, device, head_key):

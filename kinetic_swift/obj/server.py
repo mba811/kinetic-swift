@@ -130,6 +130,7 @@ class DiskFile(diskfile.DiskFile):
     reader_cls = DiskFileReader
 
     def __init__(self, mgr, device, host, port, *args, **kwargs):
+        self.device = device
         self.unlink_wait = kwargs.pop('unlink_wait', False)
         device_path = ''
         self.disk_chunk_size = kwargs.pop('disk_chunk_size',
@@ -154,7 +155,7 @@ class DiskFile(diskfile.DiskFile):
         try:
             self.conn = mgr.get_connection(host, port)
         except:
-             # Mark device as offline for other object-servers
+            # Mark device as offline for other object-servers
             self.tag_kinetic_device_as_offline(self.device)
             raise
         self.logger = mgr.logger
@@ -362,11 +363,11 @@ class DiskFileManager(diskfile.DiskFileManager):
         self.available_prefix = conf.get('kinetic_available_prefix', AVAILABLE_PREFIX)
         self.memcache_client = memcache.Client(MEMCACHE_SERVERS, debug=0)
 
-    def get_kinetic_dev_path(self, id):
-        return self.memcache_client.get(self.available_prefix + str(id))
+    def get_kinetic_dev_path(self, device):
+        return self.memcache_client.get(self.available_prefix + str(device))
 
-    def tag_kinetic_device_as_offline(self, id):
-        self.memcache_client.delete(self.available_prefix + str(id))
+    def tag_kinetic_device_as_offline(self, device):
+        self.memcache_client.delete(self.available_prefix + str(device))
 
     def _get_address_for_device(self, device):
         # Caching this will make normal behavior 1ms or 2 faster but 

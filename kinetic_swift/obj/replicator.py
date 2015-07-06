@@ -66,7 +66,7 @@ class KineticReplicator(ObjectReplicator):
         self.response_timeout = int(conf.get('response_timeout', 30))
         # device => [last_used, conn]
         self._conn_pool = {}
-        self.max_connections = 10
+        self.max_connections = int(conf.get('max_connections', 10))
         self.swift = get_internal_client(conf, 'Kinetic Object Rebuilder',
                                          self.logger)
 
@@ -166,6 +166,8 @@ class KineticReplicator(ObjectReplicator):
             conn = self._get_conn(device)
         else:
             conn = pool_entry[1]
+        if conn.faulted or not conn.isConnected:
+            conn.reconnect()
         self._conn_pool[device] = (now, conn)
         return conn
 
@@ -275,6 +277,8 @@ class KineticReplicator(ObjectReplicator):
         self.logger.info('begining replication pass for %r', device)
         for key in self.iter_all_objects(conn, policy):
             job = self.build_job(device, key, policy)
+            # refresh conn
+            conn = self.get_conn(device)
             self.replicate_object(conn, job)
 
     def _replicate(self, *devices, **kwargs):

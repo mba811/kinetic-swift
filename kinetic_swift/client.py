@@ -65,8 +65,6 @@ class KineticSwiftClient(object):
     def close(self):
         if not self.conn:
             return
-        self.logger.warning('Forcing shutdown of connection to %s:%s' % (
-            self.hostname, self.port))
         real_sock = None
         green_sock = getattr(self.conn, '_socket', None)
         if hasattr(green_sock, 'fd'):
@@ -75,7 +73,7 @@ class KineticSwiftClient(object):
             self.conn.close()
         if real_sock:
             real_sock.close()
-        self.logger.info('Connection to %s:%s is closed' % (
+        self.logger.info('Forced shutdown to %s:%s' % (
             self.hostname, self.port))
         self.conn = None
 

@@ -21,7 +21,7 @@ import struct
 
 import msgpack
 
-from swift.common.utils import parse_options, split_path
+from swift.common.utils import parse_options, split_path, Timestamp
 from swift.common.daemon import run_daemon
 from swift.common.direct_client import direct_put_object
 from swift.obj.replicator import ObjectReplicator
@@ -41,6 +41,7 @@ def split_key(key):
         return False
     hashpath = parts[1]
     timestamp = '.'.join(parts[2:4])
+    ext = parts[4]
     nonce_parts = parts[-1].split('-')
     nonce = '-'.join(nonce_parts[:5])
     if len(nonce_parts) > 5:
@@ -50,6 +51,7 @@ def split_key(key):
     return {
         'policy': policy,
         'hashpath': hashpath,
+        'ext': ext,
         'nonce': nonce,
         'frag_index': frag_index,
         'timestamp': timestamp,
@@ -74,7 +76,13 @@ class KineticReplicator(ObjectReplicator):
         prefix = get_policy_string('objects', policy)
         key_range = [prefix + term for term in ('.', '/')]
         for key in conn.iterKeyRange(*key_range):
-            # TODO: clean up hashdir and old tombstones
+            key_info = split_key(key)
+            if key_info['ext'] == 'ts' and Timestamp(
+                    key_info['timestamp']) < (
+                        time.time() - self.reclaim_age):
+                self.logger.debug('reclaiming tombstone %r' % key)
+                conn.delete(key, force=True).wait()
+                continue
             yield key
 
     def find_target_devices(self, key, policy):

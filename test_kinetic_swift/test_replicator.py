@@ -76,13 +76,14 @@ class TestUtilFunctions(unittest.TestCase):
         hash_ = swift_utils.hash_path('a', 'c', 'o')
         t = swift_utils.Timestamp(time.time())
         nonce = uuid.uuid4()
-        key = 'objects.%s.%s.%s' % (hash_, t.internal, nonce)
+        key = 'objects.%s.%s.data.%s' % (hash_, t.internal, nonce)
         expected = {
             'hashpath': hash_,
             'frag_index': None,
             'nonce': str(nonce),
             'policy': storage_policy.POLICIES.legacy,
             'timestamp': t.internal,
+            'ext': 'data',
         }
         try:
             self.assertEqual(replicator.split_key(key), expected)
@@ -94,7 +95,7 @@ class TestUtilFunctions(unittest.TestCase):
         hash_ = swift_utils.hash_path('a', 'c', 'o')
         t = swift_utils.Timestamp(time.time())
         nonce = uuid.uuid4()
-        key_template = '%(prefix)s.%(hash)s.%(timestamp)s' \
+        key_template = '%(prefix)s.%(hash)s.%(timestamp)s.%(ext)s' \
             '.%(nonce)s%(trailing_frag)s'
         with utils.patch_policies(with_ec_default=True):
             for p in storage_policy.POLICIES:
@@ -104,11 +105,13 @@ class TestUtilFunctions(unittest.TestCase):
                 else:
                     frag_index = None
                     trailing_frag = ''
+                ext = random.choice(['data', 'ts'])
                 object_prefix = storage_policy.get_policy_string('objects', p)
                 key = key_template % {
                     'prefix': object_prefix,
                     'hash': hash_,
                     'timestamp': t.internal,
+                    'ext': ext,
                     'nonce': nonce,
                     'trailing_frag': trailing_frag,
                 }
@@ -118,6 +121,7 @@ class TestUtilFunctions(unittest.TestCase):
                     'nonce': str(nonce),
                     'frag_index': frag_index,
                     'timestamp': t.internal,
+                    'ext': ext,
                 }
                 try:
                     self.assertEqual(replicator.split_key(key), expected)
@@ -149,7 +153,8 @@ class TestKineticReplicator(utils.KineticSwiftTestCase):
             self.daemon.load_object_ring(policy)
         self.logger = self.daemon.logger = \
             utils.debug_logger('test-kinetic-replicator')
-        self._df_router = server.diskfile.DiskFileRouter({}, self.logger)
+        self._df_router = server.diskfile.DiskFileRouter(
+            {'unlink_wait': True}, self.logger)
         self.policy = random.choice(list(server.diskfile.POLICIES))
         self.mgr = self._df_router[self.policy]
 
@@ -163,6 +168,12 @@ class TestKineticReplicator(utils.KineticSwiftTestCase):
             writer.write(body)
             writer.put(metadata)
         return metadata, body
+
+    def delete_obj(self, device, object_name, timestamp=None, policy=None):
+        policy = policy or self.policy
+        df = self.mgr.get_diskfile(device, '0', 'a', 'c', object_name,
+                                   policy=policy)
+        df.delete(timestamp or time.time())
 
     def get_object(self, device, object_name, policy=None):
         policy = policy or self.policy
@@ -206,6 +217,29 @@ class TestKineticReplicator(utils.KineticSwiftTestCase):
         for policy in server.diskfile.POLICIES:
             keys = list(self.daemon.iter_all_objects(conn, policy))
             self.assertEqual(20, len(keys))
+
+    def test_reclaim_tombstones(self):
+        port = self.ports[0]
+        dev = '127.0.0.1:%s' % port
+        ts = (server.diskfile.Timestamp(t) for t in
+              itertools.count(int(time.time()) - 1000))
+        conn = self.client_map[port]
+        # create two objects
+        self.put_object(dev, 'obj1', timestamp=next(ts).internal)
+        self.put_object(dev, 'obj2', timestamp=next(ts).internal)
+        keys = list(self.daemon.iter_all_objects(conn, self.policy))
+        self.assertEqual(2, len(keys))
+        # delete one
+        self.delete_obj(dev, 'obj2', timestamp=next(ts).internal)
+        keys = list(self.daemon.iter_all_objects(conn, self.policy))
+        self.assertEqual(2, len(keys))
+        # bring in reclaim age
+        self.daemon.reclaim_age = 500
+        keys = list(self.daemon.iter_all_objects(conn, self.policy))
+        self.assertEqual(1, len(keys))
+        # sanity
+        resp = conn.getKeyRange('chunks.', 'objects/')
+        self.assertEqual(len(resp.wait()), 1)
 
     def test_replicate_all_policies(self):
         self.daemon.run_once()

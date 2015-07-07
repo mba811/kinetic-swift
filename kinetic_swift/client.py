@@ -118,7 +118,6 @@ class KineticSwiftClient(object):
         keys = self.getKeyRange(start_key, end_key).wait()
         while keys:
             for key in keys:
-                print key
                 yield key
             # see if there's any more values
             start_key = key

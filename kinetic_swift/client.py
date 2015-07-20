@@ -3,7 +3,7 @@ from collections import deque
 import errno
 from eventlet import Timeout, spawn_n, event
 
-from kinetic.asyncclient import AsyncClient
+from kinetic import AsyncClient
 import datetime
 
 
@@ -47,14 +47,18 @@ class Response(object):
 
 class KineticSwiftClient(object):
 
-    def __init__(self, logger, host, port, **kwargs):
+    def __init__(self, logger, device_info, **kwargs):
         self.maxReturned = None  # use library default
-        self.host = self.hostname = host
-        self.port = port
+        self.host = self.hostname = device_info.host
+        self.port = device_info.port
         self.response_timeout = kwargs.pop('response_timeout', 30)
         self.logger = logger
         self.conn = AsyncClient(host, port, **kwargs)
         self.conn.connect()
+        # Verify WWN
+        if self.conn.cofig.world_wide_name != device_info.wwn:
+            raise Exception("The kinetic device at %s:%s is not %s" % (
+                self.host, self.port, device_info.wwn))
 
     def log_info(self, message):
         self.logger.info('%s kinetic %s (%s): %s' % (datetime.datetime.now(),

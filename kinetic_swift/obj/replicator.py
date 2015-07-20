@@ -30,6 +30,7 @@ from swift.common.storage_policy import (
     POLICIES, EC_POLICY, get_policy_string, split_policy_string)
 
 from kinetic_swift.client import KineticSwiftClient
+from kinetic_swift.device import MemcachedDeviceMap
 from kinetic_swift.utils import get_internal_client
 from kinetic_swift.obj.server import object_key, install_kinetic_diskfile
 
@@ -67,6 +68,7 @@ class KineticReplicator(ObjectReplicator):
         # device => [last_used, conn]
         self._conn_pool = {}
         self.max_connections = 10
+        self.device_map = MemcachedDeviceMap(conf, self.logger)
         self.swift = get_internal_client(conf, 'Kinetic Object Rebuilder',
                                          self.logger)
 
@@ -181,9 +183,9 @@ class KineticReplicator(ObjectReplicator):
             conn.close()
 
     def _get_conn(self, device):
-        host, port = device.split(':')
+        device_info = self.device_map[device]
         conn = KineticSwiftClient(
-            self.logger, host, int(port),
+            self.logger, device_info,
             connect_timeout=self.connect_timeout,
             response_timeout=self.response_timeout,
         )

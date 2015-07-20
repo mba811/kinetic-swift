@@ -17,7 +17,7 @@ from swift.common.exceptions import DiskFileDeviceUnavailable
 
 class ConnectionManager(object):
 	
-	def __init__(self, conf, logger):
+    def __init__(self, conf, logger):
         self.logger = logger
         self.persist_connection = bool(conf.get('persist_connection', False))
         self.connect_timeout = int(conf.get('connect_timeout', 3))
@@ -26,7 +26,7 @@ class ConnectionManager(object):
         self.device_map = MemcachedDeviceMap(conf, logger)
         self.conn_pool = {}
         		
-	def _new_connection(self, device, **kwargs):
+    def _new_connection(self, device, **kwargs):
         kwargs.setdefault('connect_timeout', self.connect_timeout)
         kwargs.setdefault('response_timeout', self.response_timeout)
         device_info = self.device_map[device]

@@ -30,8 +30,8 @@ class MemcachedDeviceMap(object):
     
     def __init__(self, conf, logger):         
         self.logger = logger
-        self.memcache_client = memcache.Client(MEMCACHE_SERVERS, debug=0)
-        self.available_prefix = conf.get('kinetic_available_prefix', AVAILABLE_PREFIX)
+        self.memcache_client = memcache.Client(self.MEMCACHE_SERVERS, debug=0)
+        self.available_prefix = conf.get('kinetic_available_prefix', self.AVAILABLE_PREFIX)
     
     def __getitem__(self, device):
         # Caching this will make normal behavior 1ms or 2 faster but 

@@ -3,7 +3,7 @@ from collections import deque
 import errno
 from eventlet import Timeout, spawn_n, event
 
-from kinetic.asyncclient import AsyncClient
+from kinetic import AsyncClient
 import datetime
 
 

@@ -62,6 +62,7 @@ end
     owner "vagrant"
     group "vagrant"
     action :create
+    recursive true
   end
 end
 

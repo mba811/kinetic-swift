@@ -70,6 +70,13 @@ def async_key(policy, hashpath, timestamp):
     return '%s.%s.%s' % (async_policy, hashpath, timestamp)
 
 
+def temp_key(policy, hashpath, nonce):
+    temp_policy = diskfile.get_tmp_dir(policy)
+    # we add some time to roughly indicate when this this was created
+    timestamp = diskfile.Timestamp(time.time()).internal
+    return '%s.%s.%s.%s' % (temp_policy, hashpath, nonce, timestamp)
+
+
 def get_nonce(key):
     """
     A nonce is a unique id for an data blob on the disk - each replicate of an
@@ -208,6 +215,8 @@ class DiskFile(diskfile.DiskFile):
     @contextmanager
     def create(self, size=None):
         self._nonce = str(uuid4())
+        # initialize the temp marker
+        self._temp_marker = None
         self._chunk_id = 0
         try:
             self._pending_write = deque()
@@ -242,8 +251,17 @@ class DiskFile(diskfile.DiskFile):
                                      synchronization=synchronization)
         self._pending_write.append(pending_resp)
 
+    def _make_temp_marker(self):
+        """
+        Write down a temp marker with timestamp for this hash/nonce.
+        """
+        self._temp_marker = temp_key(self.policy, self.hashpath, self._nonce)
+        self._submit_write(self._temp_marker, '')
+
     def _sync_buffer(self):
         if self._buffer:
+            if not self._temp_marker:
+                self._make_temp_marker()
             # write out the chunk buffer!
             self._chunk_id += 1
             key = chunk_key(self.hashpath, self._nonce, self._chunk_id)
@@ -285,13 +303,16 @@ class DiskFile(diskfile.DiskFile):
             spawn_n(self._unlink_old, timestamp)
 
     def _unlink_old(self, req_timestamp):
+        pending = deque()
+        # clean-up temp marker
+        if self._temp_marker:
+            pending.append(self.conn.delete(self._temp_marker, force=True))
         start_key = self.object_key()[:-1]
         end_key = self.object_key(timestamp=req_timestamp.internal)
         end_key = object_key(self.policy, self.hashpath,
                              timestamp=req_timestamp.internal, extension='')
         head_keys = list(self.conn.iterKeyRange(
             start_key, end_key, endKeyInclusive=False))
-        pending = deque()
         for head_key in head_keys:
             nonce = get_nonce(head_key)
 

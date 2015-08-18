@@ -40,3 +40,16 @@ def get_internal_client(conf, title, logger, default_retries=3):
             _('Unable to load internal client from config: %r (%s)') %
             (internal_client_conf_path, err))
     return client
+
+
+def key_range_markers(marker):
+    """
+    So we only use '.' to separate "paths" in or key names, that means that
+    any key under a "path" starting with "foo" would be after "foo." and
+    before "foo/" because chr(ord('.') + 1) == '/'.
+
+    :param marker: the first segment of the key space
+
+    :returns: a tuple, (start_key, end_key)
+    """
+    return tuple(marker + m for m in ('.', '/'))

@@ -465,6 +465,13 @@ class ObjectController(server.ObjectController):
         # DebugLogger's don't have handlers
         for handler in getattr(self.logger.logger, 'handlers', []):
             kinetic_logger.addHandler(handler)
+        if self.logger.logger.statsd_client:
+            orig_send = self.logger.logger.statsd_client._send
+
+            def _send(m_name, *args, **kwargs):
+                m_name = m_name.replace(':', '_')
+                return orig_send(m_name, *args, **kwargs)
+            self.logger.logger.statsd_client._send = _send
 
 
 def app_factory(global_conf, **local_conf):

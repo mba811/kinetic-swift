@@ -25,10 +25,12 @@ import eventlet
 from StringIO import StringIO
 from ConfigParser import ConfigParser
 
+import mock
+
 from swift.common import ring, storage_policy, utils as swift_utils
 
 from kinetic_swift.obj import replicator, server
-from kinetic_swift.utils import ic_conf_body
+from kinetic_swift.utils import ic_conf_body, key_range_markers
 
 import utils
 
@@ -145,6 +147,7 @@ class TestKineticReplicator(utils.KineticSwiftTestCase):
             'swift_dir': self.test_dir,
             'kinetic_replication_mode': self.REPLICATION_MODE,
             'recon_cache_path': recon_cache_path,
+            'disk_chunk_size': 100,
         }
         self.daemon = replicator.KineticReplicator(conf)
         # force ring reload
@@ -160,14 +163,17 @@ class TestKineticReplicator(utils.KineticSwiftTestCase):
 
     def put_object(self, device, object_name, body='', timestamp=None,
                    policy=None):
+        if isinstance(body, basestring):
+            body = [body]
         policy = policy or self.policy
         df = self.mgr.get_diskfile(device, '0', 'a', 'c', object_name,
                                    policy=policy)
         metadata = {'X-Timestamp': timestamp or time.time()}
         with df.create() as writer:
-            writer.write(body)
+            for chunk in body:
+                writer.write(chunk)
             writer.put(metadata)
-        return metadata, body
+        return metadata, ''.join(body)
 
     def delete_obj(self, device, object_name, timestamp=None, policy=None):
         policy = policy or self.policy
@@ -294,6 +300,167 @@ class TestKineticReplicator(utils.KineticSwiftTestCase):
         self.assertEquals(source_keys, target_keys)
         self.assertEqual(len(self.daemon._conn_pool),
                          self.policy.object_ring.replica_count)
+
+    def test_cleanup_aborted_uploads(self):
+        port = random.choice(self.ports)
+        conn = self.client_map[port]
+        dev = '127.0.0.1:%s' % port
+        num_chunks = 3
+
+        # first make a good obj1 diskfile
+        def good_body():
+            for i in range(num_chunks):
+                yield chr(97 + i) * self.mgr.disk_chunk_size
+        self.put_object(dev, 'obj1', body=good_body())
+
+        # sanity
+        metadata, body = self.get_object(dev, 'obj1')
+        self.assertEqual(body, ''.join(good_body()))
+
+        # sanity chunks
+        keys = conn.getKeyRange('chunks.', 'chunks/').wait()
+        self.assertEqual(3, len(keys))
+
+        # now upload another but blow up at the end
+        def exploding_body():
+            for chunk in good_body():
+                yield chunk
+            raise Exception('KABOOM!')
+
+        try:
+            self.put_object(dev, 'obj1', body=exploding_body())
+        except Exception:
+            pass
+        else:
+            self.fail('exploding_body did not explode!')
+
+        # can still read old version
+        self.assertEqual(self.get_object(dev, 'obj1'), (metadata, body))
+
+        # ... but there's a few extra chunks
+        extra_chunks = []
+        for key in conn.getKeyRange('chunks.', 'chunks/').wait():
+            if key in keys:
+                continue
+            extra_chunks.append(key)
+        self.assertTrue(extra_chunks)
+        hash_, nonce = extra_chunks[0].split('.')[1:3]
+
+        # ... and a temp_marker
+        tmp = replicator.diskfile.get_tmp_dir(self.policy)
+        temp_markers = []
+        for key in conn.getKeyRange(*key_range_markers(tmp)).wait():
+            temp_markers.append(key)
+        self.assertEqual(1, len(temp_markers))  # sanity
+
+        # which points to the extra chunk keys by hash and nonce
+        temp_hash, temp_nonce = temp_markers[0].split('.')[1:3]
+        self.assertEqual(hash_, temp_hash)
+        self.assertEqual(nonce, temp_nonce)
+        extra_chunk_marker = 'chunks.%s.%s' % (hash_, nonce)
+
+        # ... it'll stay like this until the aborted upload times out
+        self.daemon._replicate(dev, policy=self.policy)
+        expected = {
+            extra_chunk_marker: len(extra_chunks),
+            tmp: 1,
+        }
+        for marker, count in expected.items():
+            keys = conn.getKeyRange(*key_range_markers(marker)).wait()
+            msg = 'expected %s %s keys, found %r' % (count, marker, keys)
+            self.assertEqual(count, len(keys), msg)
+
+        # ... but after awhile, next time it runs
+        the_future = time.time() + (9 * 60 * 60)
+        with mock.patch('time.time') as mock_time:
+            mock_time.return_value = the_future
+            self.daemon._replicate(dev, policy=self.policy)
+
+        expected = {
+            extra_chunk_marker: 0,
+            tmp: 0,
+        }
+        for marker, count in expected.items():
+            keys = conn.getKeyRange(*key_range_markers(marker)).wait()
+            msg = 'expected %s keys, found %r' % (count, keys)
+            self.assertEqual(count, len(keys), msg)
+
+    def test_cleanup_orphaned_temp_markers(self):
+        # use the first primary to keep the object from being replicated off
+        port = self.ports[0]
+        conn = self.client_map[port]
+        dev = '127.0.0.1:%s' % port
+        num_chunks = 3
+
+        # we're going to sniff for temp_markers during upload
+        tmp = replicator.diskfile.get_tmp_dir(self.policy)
+        temp_markers = []
+
+        def find_temp_markers():
+            for key in conn.getKeyRange(*key_range_markers(tmp)).wait():
+                temp_markers.append(key)
+
+        # sanity check no temp markers
+        find_temp_markers()
+        self.assertFalse(temp_markers)
+
+        # this is our test body
+        def good_body():
+            for i in range(num_chunks):
+                yield chr(97 + i) * self.mgr.disk_chunk_size
+
+        # make a new object, and sniff for temp_markers as we go
+        def sniffing_body():
+            for chunk in good_body():
+                yield chunk
+            find_temp_markers()
+            yield ''
+
+        self.put_object(dev, 'obj1', body=sniffing_body())
+
+        # sanity object is fine
+        metadata, body = self.get_object(dev, 'obj1')
+        self.assertEqual(body, ''.join(good_body()))
+
+        # temp_marker is of course cleaned up
+        self.assertEqual(len(temp_markers), 1)
+        temp_marker = temp_markers.pop(0)
+        self.assertFalse(conn.get(temp_marker).wait())
+
+        # ... but even if we put it back to simulate a failure to remove the
+        # temp_marker after a successful upload
+        conn.put(temp_marker, '').wait()
+
+        # replication will ignore it
+        self.daemon._replicate(dev, policy=self.policy)
+
+        expected = {
+            'chunks': 3,
+            tmp: 1,
+        }
+        for marker, count in expected.items():
+            keys = conn.getKeyRange(*key_range_markers(marker)).wait()
+            self.assertEqual(count, len(keys))
+
+        # ... and the object is uneffected
+        self.assertEqual(self.get_object(dev, 'obj1'), (metadata, body))
+
+        # ... until sometime later, replication will just clean it up
+        the_future = time.time() + (9 * 60 * 60)
+        with mock.patch('time.time') as mock_time:
+            mock_time.return_value = the_future
+            self.daemon._replicate(dev, policy=self.policy)
+
+        expected = {
+            'chunks': 3,
+            tmp: 0,
+        }
+        for marker, count in expected.items():
+            keys = conn.getKeyRange(*key_range_markers(marker)).wait()
+            self.assertEqual(count, len(keys))
+
+        # ... and the object is *still* uneffected
+        self.assertEqual(self.get_object(dev, 'obj1'), (metadata, body))
 
     def test_replicate_to_right_servers(self):
         source_device = '127.0.0.1:%s' % self.ports[0]

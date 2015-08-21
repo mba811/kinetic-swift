@@ -17,11 +17,18 @@ import random
 import os
 import hashlib
 import email
+from urllib import quote
 
+import mock
+from eventlet import spawn, wsgi, listen
+
+from swift.common.bufferedhttp import http_connect
+from swift.common.storage_policy import POLICIES
 from swift.common.swob import Request
-from swift.common.utils import Timestamp, split_path, hash_path
+from swift.common.utils import Timestamp, split_path, hash_path, NullLogger
 
-from kinetic_swift.obj import server
+from kinetic_swift.obj import server, replicator
+from kinetic_swift.utils import key_range_markers
 
 from utils import KineticSwiftTestCase, mocked_http_conn
 
@@ -316,6 +323,145 @@ class TestKineticObjectServer(KineticSwiftTestCase):
             },
         }
         self.assertEqual(async_data, expected)
+
+
+class TestSpawnedKineticServer(KineticSwiftTestCase):
+
+    def setUp(self):
+        super(TestSpawnedKineticServer, self).setUp()
+        self.policy = random.choice(list(POLICIES))
+        # kinetic device
+        self.port = self.ports[0]
+        self.client = self.client_map[self.port]
+        # object-server
+        self.disk_chunk_size = 100
+        self.conf = {
+            'unlink_wait': 'true',
+            'disk_chunk_size': self.disk_chunk_size,
+        }
+        self.app = server.app_factory(self.conf)
+        # spawned port
+        listen_sock = listen(('localhost', 0))
+        self.spawned_server = spawn(wsgi.server, listen_sock, self.app,
+                                    NullLogger())
+        # setup for connection
+        self.node = {
+            'ipaddr': '127.0.0.1',
+            'port': listen_sock.getsockname()[1],
+            'device': '127.0.0.1:%s' % (self.port),
+            'partition': '0',
+        }
+
+    def tearDown(self):
+        self.spawned_server.kill()
+        super(TestSpawnedKineticServer, self).tearDown()
+
+    def test_get_not_found(self):
+        conn = http_connect(method='GET', path='/a/c/o', **self.node)
+        resp = conn.getresponse()
+        resp.read()
+        self.assertEqual(resp.status, 404)
+
+    def test_put_with_body(self):
+        num_chunks = 10
+
+        # PUT
+        headers = {
+            'x-timestamp': Timestamp(time.time()).internal,
+            'content-type': 'application/octet-stream',
+            'content-length': self.disk_chunk_size * num_chunks,
+            'x-backend-storage-policy-index': int(self.policy),
+        }
+        conn = http_connect(method='PUT', path='/a/c/o', headers=headers,
+                            **self.node)
+        for i in range(num_chunks):
+            conn.send(self.disk_chunk_size * chr(97 + i))
+        resp = conn.getresponse()
+        self.assertEqual(resp.status, 201)
+        resp.read()
+
+        # GET
+        path = quote('/%(device)s/%(partition)s' % self.node) + '/a/c/o'
+        conn.putrequest('GET', path)
+        conn.putheader('x-backend-storage-policy-index', int(self.policy))
+        conn.endheaders()
+        resp = conn.getresponse()
+        self.assertEqual(resp.status, 200)
+        expected_body = ''.join(self.disk_chunk_size * chr(97 + i)
+                                for i in range(num_chunks))
+        self.assertEqual(resp.read(), expected_body)
+
+        # sanity chunks
+        object_dir = server.diskfile.get_data_dir(self.policy)
+        keys = self.client.getKeyRange(*key_range_markers(object_dir)).wait()
+        self.assertEqual(len(keys), 1)
+        keys = self.client.getKeyRange(*key_range_markers('chunks')).wait()
+        self.assertEqual(len(keys), num_chunks)
+        tmp_dir = server.diskfile.get_tmp_dir(self.policy)
+        keys = self.client.getKeyRange(*key_range_markers(tmp_dir)).wait()
+        self.assertEqual(len(keys), 0)
+
+    def test_put_disconnect(self):
+        num_chunks = 10
+
+        # PUT
+        headers = {
+            'x-timestamp': Timestamp(time.time()).internal,
+            'content-type': 'application/octet-stream',
+            'content-length': self.disk_chunk_size * num_chunks,
+            'x-backend-storage-policy-index': int(self.policy),
+        }
+        conn = http_connect(method='PUT', path='/a/c/o', headers=headers,
+                            **self.node)
+        for i in range(num_chunks - 1):
+            conn.send(self.disk_chunk_size * chr(97 + i))
+        conn.close()
+
+        # GET
+        headers = {
+            'x-backend-storage-policy-index': int(self.policy),
+        }
+        conn = http_connect(method='GET', path='/a/c/o', headers=headers,
+                            **self.node)
+        resp = conn.getresponse()
+        self.assertEqual(resp.status, 404)
+
+        # per-policy dirs
+        object_dir = server.diskfile.get_data_dir(self.policy)
+        tmp_dir = server.diskfile.get_tmp_dir(self.policy)
+
+        # find old chunks
+        keys = self.client.getKeyRange(*key_range_markers(object_dir)).wait()
+        self.assertEqual(len(keys), 0)
+        keys = self.client.getKeyRange(*key_range_markers('chunks')).wait()
+        self.assertLessEqual(len(keys), num_chunks - 1)
+        keys = self.client.getKeyRange(*key_range_markers(tmp_dir)).wait()
+        self.assertEqual(len(keys), 1)
+
+        # make sure the replicator won't clean up too quick
+        replicator._cleanup_old_chunks(self.client, self.policy)
+
+        # still have old chunks
+        keys = self.client.getKeyRange(*key_range_markers(object_dir)).wait()
+        self.assertEqual(len(keys), 0)
+        keys = self.client.getKeyRange(*key_range_markers('chunks')).wait()
+        self.assertLessEqual(len(keys), num_chunks - 1)
+        keys = self.client.getKeyRange(*key_range_markers(tmp_dir)).wait()
+        self.assertEqual(len(keys), 1)
+
+        # ... but after awhile
+        the_future = time.time() + (9 * 60 * 60)
+        with mock.patch('time.time') as mock_time:
+            mock_time.return_value = the_future
+            replicator._cleanup_old_chunks(self.client, self.policy)
+
+        # no more old chunks!
+        keys = self.client.getKeyRange(*key_range_markers(object_dir)).wait()
+        self.assertEqual(len(keys), 0)
+        keys = self.client.getKeyRange(*key_range_markers('chunks')).wait()
+        self.assertEqual(len(keys), 0)
+        keys = self.client.getKeyRange(*key_range_markers(tmp_dir)).wait()
+        self.assertEqual(len(keys), 0)
 
 
 if __name__ == "__main__":

@@ -30,8 +30,37 @@ from swift.common.storage_policy import (
     POLICIES, EC_POLICY, get_policy_string, split_policy_string)
 
 from kinetic_swift.client import KineticSwiftClient
-from kinetic_swift.utils import get_internal_client
-from kinetic_swift.obj.server import object_key, install_kinetic_diskfile
+from kinetic_swift.utils import get_internal_client, key_range_markers
+from kinetic_swift.obj.server import (object_key, diskfile,
+                                      install_kinetic_diskfile)
+
+
+CLENAUP_ABORT_UPLOAD_SECONDS = 28800
+
+
+def _cleanup_old_chunks(conn, policy):
+    """
+    Look for old temp markers and remove orphaned chunks.
+    """
+    temp_range = key_range_markers(diskfile.get_tmp_dir(policy))
+    for temp_marker in conn.iterKeyRange(*temp_range):
+        # tmp.<hash>.<nonce>.<time>.<stamp>
+        parts = temp_marker.split('.')
+        timeout = float('.'.join(parts[3:5])) + CLENAUP_ABORT_UPLOAD_SECONDS
+        if time.time() < timeout:
+            continue
+        # see if a head key exists for this nonce
+        hash_range = key_range_markers('%s.%s' % (
+            diskfile.get_data_dir(policy), parts[1]))
+        for key in conn.iterKeyRange(*hash_range):
+            if split_key(key)['nonce'] == parts[2]:
+                break
+        else:
+            # did not find matching head key
+            chunk_marker = 'chunks.{1}.{2}'.format(*parts)
+            chunk_range = key_range_markers(chunk_marker)
+            conn.delete_keys(conn.iterKeyRange(*chunk_range))
+        conn.delete(temp_marker, force=True).wait()
 
 
 def split_key(key):
@@ -283,6 +312,7 @@ class KineticReplicator(ObjectReplicator):
 
     def replicate_device(self, device, conn, policy):
         self.logger.info('begining replication pass for %r', device)
+        _cleanup_old_chunks(conn, policy)
         for key in self.iter_all_objects(conn, policy):
             job = self.build_job(device, key, policy)
             # refresh conn

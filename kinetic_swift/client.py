@@ -114,15 +114,21 @@ class KineticSwiftClient(object):
         return promise
 
     def iterKeyRange(self, start_key, end_key, **kwargs):
-        kwargs.setdefault('maxReturned', self.maxReturned)
-        keys = self.getKeyRange(start_key, end_key).wait()
+        if 'maxReturned' not in kwargs and self.maxReturned is not None:
+            kwargs['maxReturned'] = self.maxReturned
+        keys = self.getKeyRange(start_key, end_key, **kwargs).wait()
         while keys:
             for key in keys:
                 yield key
             # see if there's any more values
-            start_key = key
+            if kwargs.get('reverse', False):
+                end_key = key
+            else:
+                start_key = key
             keys = self.getKeyRange(start_key, end_key,
-                                    startKeyInclusive=False).wait()
+                                    startKeyInclusive=False,
+                                    endKeyInclusive=False,
+                                    **kwargs).wait()
 
     def delete(self, key, *args, **kwargs):
         # self.log_info('delete')

@@ -1,0 +1,101 @@
+{
+    "racks": [
+        {
+            "chassis": [
+                {
+                    "devices": [
+                        {
+                            "deviceId": {
+                                "ips": [
+                                    "192.168.23.230"
+                                ],
+                                "port": 8010,
+                                "wwn": "device-10"
+                            }
+                        },
+                        {
+                            "deviceId": {
+                                "ips": [
+                                    "192.168.23.230"
+                                ],
+                                "port": 8011,
+                                "wwn": "device-11"
+                            }
+                        }
+                    ],
+                    "id": "simulator-1"
+                },
+                {
+                    "devices": [
+                        {
+                            "deviceId": {
+                                "ips": [
+                                    "192.168.23.230"
+                                ],
+                                "port": 8020,
+                                "wwn": "device-20"
+                            }
+                        },
+                        {
+                            "deviceId": {
+                                "ips": [
+                                    "192.168.23.230"
+                                ],
+                                "port": 8021,
+                                "wwn": "device-21"
+                            }
+                        }
+                    ],
+                    "id": "simulator-2"
+                },
+                {
+                    "devices": [
+                        {
+                            "deviceId": {
+                                "ips": [
+                                    "192.168.23.230"
+                                ],
+                                "port": 8030,
+                                "wwn": "device-30"
+                            }
+                        },
+                        {
+                            "deviceId": {
+                                "ips": [
+                                    "192.168.23.230"
+                                ],
+                                "port": 8031,
+                                "wwn": "device-31"
+                            }
+                        }
+                    ],
+                    "id": "simulator-3"
+                },
+                {
+                    "devices": [
+                        {
+                            "deviceId": {
+                                "ips": [
+                                    "192.168.23.230"
+                                ],
+                                "port": 8040,
+                                "wwn": "device-40"
+                            }
+                        },
+                        {
+                            "deviceId": {
+                                "ips": [
+                                    "192.168.23.230"
+                                ],
+                                "port": 8041,
+                                "wwn": "device-41"
+                            }
+                        }
+                    ],
+                    "id": "simulator-4"
+                }
+            ],
+            "id": "rack-1"
+        }
+    ]
+}

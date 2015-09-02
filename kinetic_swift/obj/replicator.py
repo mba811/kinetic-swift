@@ -32,7 +32,7 @@ from swift.common.storage_policy import (
 from kinetic_swift.client import KineticSwiftClient
 from kinetic_swift.utils import get_internal_client, key_range_markers
 from kinetic_swift.obj.server import (object_key, diskfile,
-                                      install_kinetic_diskfile)
+                                      install_kinetic_diskfile, temp_key)
 
 
 CLENAUP_ABORT_UPLOAD_SECONDS = 28800
@@ -104,7 +104,8 @@ class KineticReplicator(ObjectReplicator):
     def iter_all_objects(self, conn, policy):
         prefix = get_policy_string('objects', policy)
         key_range = [prefix + term for term in ('.', '/')]
-        for key in conn.iterKeyRange(*key_range):
+        last_key, last_key_info = None, {}
+        for key in conn.iterKeyRange(*key_range, reverse=True):
             key_info = split_key(key)
             if key_info['ext'] == 'ts' and Timestamp(
                     key_info['timestamp']) < (
@@ -112,7 +113,19 @@ class KineticReplicator(ObjectReplicator):
                 self.logger.debug('reclaiming tombstone %r' % key)
                 conn.delete(key, force=True).wait()
                 continue
-            yield key
+            if not last_key:
+                last_key, last_key_info = key, key_info
+                continue
+            if last_key_info['hashpath'] == key_info['hashpath']:
+                # this next key is better, we should clean up the old one!
+                last_key_info['timestamp'] = '0'
+                temp_marker = temp_key(**last_key_info)
+                conn.put(temp_marker, '', force=True).wait()
+                conn.delete(last_key, force=True).wait()
+            else:
+                yield last_key
+                last_key, last_key_info = key, key_info
+        yield last_key
 
     def find_target_devices(self, key, policy):
         key_info = split_key(key)
@@ -312,12 +325,12 @@ class KineticReplicator(ObjectReplicator):
 
     def replicate_device(self, device, conn, policy):
         self.logger.info('begining replication pass for %r', device)
-        _cleanup_old_chunks(conn, policy)
         for key in self.iter_all_objects(conn, policy):
             job = self.build_job(device, key, policy)
             # refresh conn
             conn = self.get_conn(device)
             self.replicate_object(conn, job)
+        _cleanup_old_chunks(conn, policy)
 
     def _replicate(self, *devices, **kwargs):
         policy = kwargs.get('policy', POLICIES.legacy)

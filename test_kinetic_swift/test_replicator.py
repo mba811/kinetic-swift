@@ -570,10 +570,11 @@ class TestKineticReplicator(utils.KineticSwiftTestCase):
         other_device = '127.0.0.1:%s' % other_port
 
         # put an old copy on source
-        self.put_object(source_device, 'obj1',
-                        timestamp=ts.next().internal)
+        old_ts = ts.next().internal
+        self.put_object(source_device, 'obj1', body='old',
+                        timestamp=old_ts)
         # put a newer copy on the handoff
-        expected = self.put_object(other_device, 'obj1',
+        expected = self.put_object(other_device, 'obj1', body='new',
                                    timestamp=ts.next().internal)
         # replicate to other servers
         self.daemon._replicate(other_device, policy=self.policy)
@@ -584,6 +585,21 @@ class TestKineticReplicator(utils.KineticSwiftTestCase):
         # and now it's gone from handoff
         self.assertRaises(server.diskfile.DiskFileNotExist, self.get_object,
                           other_device, 'obj1')
+        # immediately after a push to the new node, the old version is still
+        # on the drive
+        head_markers = key_range_markers(
+            server.diskfile.get_data_dir(self.policy))
+        self.assertEqual(2, len(self.client_map[self.ports[0]].getKeyRange(
+            *head_markers).wait()))
+        chunk_markers = key_range_markers('chunks')
+        self.assertEqual(2, len(self.client_map[self.ports[0]].getKeyRange(
+            *chunk_markers).wait()))
+        # but after another replication pass the old copy is gone
+        self.daemon._replicate(source_device, policy=self.policy)
+        self.assertEqual(1, len(self.client_map[self.ports[0]].getKeyRange(
+            *head_markers).wait()))
+        self.assertEqual(1, len(self.client_map[self.ports[0]].getKeyRange(
+            *chunk_markers).wait()))
 
 
 class TestKineticCopyReplicator(TestKineticReplicator):

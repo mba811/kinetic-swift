@@ -70,10 +70,11 @@ def async_key(policy, hashpath, timestamp):
     return '%s.%s.%s' % (async_policy, hashpath, timestamp)
 
 
-def temp_key(policy, hashpath, nonce):
+def temp_key(policy, hashpath, nonce, timestamp=None, **kwargs):
     temp_policy = diskfile.get_tmp_dir(policy)
     # we add some time to roughly indicate when this this was created
-    timestamp = diskfile.Timestamp(time.time()).internal
+    timestamp = timestamp or time.time()
+    timestamp = diskfile.Timestamp(timestamp).internal
     return '%s.%s.%s.%s' % (temp_policy, hashpath, nonce, timestamp)
 
 
@@ -312,15 +313,14 @@ class DiskFile(diskfile.DiskFile):
         end_key = object_key(self.policy, self.hashpath,
                              timestamp=req_timestamp.internal, extension='')
         head_keys = list(self.conn.iterKeyRange(
-            start_key, end_key, endKeyInclusive=False))
+            start_key, end_key))
         for head_key in head_keys:
             nonce = get_nonce(head_key)
 
             def key_gen():
                 start_key = chunk_key(self.hashpath, nonce, 0)
                 end_key = chunk_key(self.hashpath, nonce)
-                for key in self.conn.iterKeyRange(start_key, end_key,
-                                                  endKeyInclusive=False):
+                for key in self.conn.iterKeyRange(start_key, end_key):
                     yield key
                 yield head_key
 

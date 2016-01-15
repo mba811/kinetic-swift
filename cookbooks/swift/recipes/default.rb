@@ -19,6 +19,10 @@ end
 
 # packages
 
+cookbook_file "/etc/apt/sources.list.d/backports.list" do
+  source "etc/apt/sources.list.d/backports.list"
+end
+
 execute "apt-get-update" do
   command "apt-get update && touch /tmp/.apt-get-update"
   creates "/tmp/.apt-get-update"

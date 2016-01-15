@@ -35,7 +35,7 @@ required_packages = [
   "python-setuptools", "python-coverage", "python-dev", "python-nose",
   "python-simplejson", "python-xattr",  "python-eventlet", "python-greenlet",
   "python-pastedeploy", "python-netifaces", "python-dnspython", "python-mock",
-  "libxml2-dev", "libxslt1-dev"
+  "libxml2-dev", "libxslt1-dev", "liberasurecode-dev"
 ]
 required_packages.each do |pkg|
   package pkg do
